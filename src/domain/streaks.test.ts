@@ -3,8 +3,10 @@ import { addDays, periodEnd, startOfWeek, weekdayMon } from './dates'
 import { computeStreak } from './streaks'
 import { buildToday, voteGrid } from './today'
 import { dependsOn, milestoneProgress, rhythmText, tramaStats } from './tramas'
+import { buildBackup, describeBackup, parseBackup } from './backup'
 import { activeDays, bestStreak, cumulativeSeries, habitRate, monthGrid, weekCompare } from './progress'
 import { buildPlan, collectVotes, limitOn, reduceState } from './reduce'
+import { planReminders } from './reminders'
 import { dueLabel, groupTodos, todosForToday } from './todos'
 import type { Habit, Log, Rhythm, Todo, Urge, Use } from './types'
 
@@ -389,5 +391,89 @@ describe('progreso', () => {
     expect(feb.slice(0, 4)).toEqual([null, null, null, '2024-02-01'])
     expect(feb.filter(Boolean)).toHaveLength(29)
     expect(monthGrid(MON)[0]).toBe(MON)
+  })
+})
+
+describe('recordatorios', () => {
+  const trama = { id: 't', name: 'Cuidar mi cuerpo', color: 'teal' as const, order: 0, createdAt: 0 }
+  const base = { tramaId: 't', moment: 'morning' as const, rhythm: daily, createdOn: MON, archived: false }
+  const dientes: Habit = { ...base, id: 'd', name: 'Lavarme los dientes', createdAt: 1, remindAt: '08:00', cue: 'desayunar' }
+  const leer: Habit = { ...base, id: 'l', name: 'Leer', createdAt: 2, remindAt: '21:00', minVersion: 'Leer una página' }
+  const cama: Habit = { ...base, id: 'c', name: 'Hacer la cama', createdAt: 3 } // sin hora propia
+  const on = { enabled: true, rescue: true, rescueAt: '20:30' }
+  const log = (habitId: string, n: number): Log => ({ habitId, date: day(n), state: 'full', at: 0 })
+  const plan = (logs: Log[], now: string, settings = on, days = 1) => planReminders([dientes, leer, cama], [trama], logs, settings, day(3), now, days)
+
+  it('apagados no programan nada', () => {
+    expect(plan([], '07:00', { ...on, enabled: false })).toEqual([])
+  })
+  it('programa cada hábito a su hora y un rescate, en orden', () => {
+    const r = plan([log('d', 2), log('l', 2), log('c', 2)], '07:00')
+    expect(r.map((x) => [x.time, x.kind])).toEqual([['08:00', 'habit'], ['20:30', 'rescue'], ['21:00', 'habit']])
+    expect(r[0].title).toBe('Lavarme los dientes, después de desayunar')
+    expect(r[0].body).toBe('Un voto más por Cuidar mi cuerpo.')
+    expect(r[1].title).toBe('Te quedan 3 por hoy')
+    expect(r[2].body).toBe('Si hoy cuesta, basta con esto: leer una página.')
+  })
+  it('hoy se salta lo ya cumplido y las horas que ya pasaron', () => {
+    const r = plan([log('d', 3), log('d', 2), log('l', 2), log('c', 2)], '12:00')
+    expect(r.map((x) => x.kind + x.time)).toEqual(['rescue20:30', 'habit21:00'])
+    expect(r[0].title).toBe('Te quedan 2 por hoy')
+  })
+  it('sin nada pendiente no hay rescate; con uno, lo nombra', () => {
+    const allDone = [log('d', 3), log('l', 3), log('c', 3)]
+    expect(plan(allDone, '12:00')).toEqual([])
+    expect(plan(allDone.slice(0, 2), '12:00')[0].title).toBe('Te queda hacer la cama')
+  })
+  it('si ayer se falló, el aviso lo dice', () => {
+    const r = plan([log('d', 1), log('l', 1), log('l', 2), log('c', 2)], '07:00') // dientes faltó ayer
+    expect(r[0].body).toBe('Ayer faltaste. Hoy es el que cuenta.')
+    expect(r.find((x) => x.kind === 'rescue')!.body).toBe('Lavarme los dientes: ayer faltaste. Hoy es el que cuenta.')
+  })
+  it('para los días siguientes asume todo pendiente y respeta los días programados', () => {
+    const lmv: Habit = { ...dientes, rhythm: { kind: 'days', days: [0, 2, 4] } } // hoy es jueves
+    const r = planReminders([lmv], [trama], [], { ...on, rescue: false }, day(3), '23:00', 5)
+    expect(r.map((x) => x.date)).toEqual([day(4), day(7)])
+    expect(new Set(r.map((x) => x.id)).size).toBe(2)
+  })
+  it('lo que se está dejando y los hábitos de meta no generan avisos', () => {
+    const tabaco: Habit = { ...base, id: 'x', name: 'Tabaco', createdAt: 9, kind: 'reduce', remindAt: '10:00' }
+    const boxeo: Habit = { ...base, id: 'b', name: 'Boxeo', createdAt: 8, rhythm: { kind: 'quota', period: 'week', times: 2 }, remindAt: '10:00' }
+    expect(planReminders([tabaco, boxeo], [trama], [], on, day(3), '07:00', 2)).toEqual([])
+  })
+})
+
+describe('respaldo', () => {
+  const data = {
+    tramas: [{ id: 't', name: 'A', color: 'teal' as const, order: 0, createdAt: 0 }],
+    habits: [{ id: 'h', tramaId: 't', name: 'H', moment: 'morning' as const, rhythm: daily, createdOn: MON, createdAt: 0, archived: false }],
+    logs: [{ habitId: 'h', date: MON, state: 'full' as const, at: 0 }],
+    uses: [], urges: [], todos: [{ id: 'p', title: 'Dentista', done: false, createdAt: 0 }], meta: [{ key: 'reminders', value: { enabled: true } }],
+  }
+  const text = JSON.stringify(buildBackup(data, new Date('2024-01-05T10:00:00Z')))
+
+  it('lo que se exporta se puede volver a leer igual', () => {
+    const r = parseBackup(text)
+    expect(r.ok && r.backup.data).toEqual(data)
+    expect(r.ok && describeBackup(r.backup)).toBe('1 trama, 1 hábito y 1 registro')
+  })
+  it('rechaza archivos que no son un respaldo', () => {
+    expect(parseBackup('hola')).toEqual({ ok: false, error: 'El archivo no es un respaldo de Vagabond.' })
+    expect(parseBackup('{"app":"otra","data":{}}')).toMatchObject({ ok: false })
+    expect(parseBackup('[1,2]')).toMatchObject({ ok: false })
+  })
+  it('rechaza versiones futuras y datos incoherentes', () => {
+    expect(parseBackup(text.replace('"version":1', '"version":2'))).toEqual({ ok: false, error: 'Este respaldo es de una versión más nueva de Vagabond.' })
+    const orphan = JSON.stringify(buildBackup({ ...data, logs: [{ habitId: 'no-existe', date: MON, state: 'full', at: 0 }] }, new Date()))
+    expect(parseBackup(orphan)).toEqual({ ok: false, error: 'El respaldo está dañado.' })
+    const noTrama = JSON.stringify(buildBackup({ ...data, tramas: [] }, new Date()))
+    expect(parseBackup(noTrama)).toMatchObject({ ok: false })
+  })
+  it('acepta respaldos sin las tablas más nuevas', () => {
+    const old = JSON.parse(text)
+    delete old.data.todos
+    delete old.data.meta
+    const r = parseBackup(JSON.stringify(old))
+    expect(r.ok && r.backup.data.todos).toEqual([])
   })
 })

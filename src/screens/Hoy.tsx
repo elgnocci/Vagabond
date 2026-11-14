@@ -19,6 +19,7 @@ import { Hero } from '../ui/Hero'
 import { Milestone } from '../ui/Milestone'
 import { ReduceCard } from '../ui/ReduceCard'
 import { ReduceSheet } from '../ui/ReduceSheet'
+import { Settings } from '../ui/Settings'
 import { Sheet } from '../ui/Sheet'
 import type { TabId } from '../ui/TabBar'
 import { TodoRow } from '../ui/TodoRow'
@@ -40,6 +41,7 @@ export function Hoy({ onGo }: { onGo: (tab: TabId) => void }) {
   const [hito, setHito] = useState<{ trama: Trama; votes: number } | null>(null)
   const [plan, setPlan] = useState<{ open: boolean; id?: string }>({ open: false })
   const [hist, setHist] = useState<{ open: boolean; id?: string }>({ open: false })
+  const [settings, setSettings] = useState(false)
   const [snack, setSnack] = useState<{ msg: string; undo: () => void } | null>(null)
   const [toast, setToast] = useToast()
   const closeForm = useCallback(() => setForm((f) => ({ ...f, open: false })), [])
@@ -146,11 +148,16 @@ export function Hoy({ onGo }: { onGo: (tab: TabId) => void }) {
           <span className="sr-only">Hoy, </span>
           {formatDay(today)}{view?.dayNumber ? ` · Día ${view.dayNumber}` : ''}
         </h1>
-        {view?.hasHabits && (
-          <button className="icon-btn" aria-label="Nuevo hábito" onClick={() => setForm({ open: true })}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+        <div className="head-acts">
+          <button className="icon-btn" aria-label="Ajustes" onClick={() => setSettings(true)}>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2.2" /><circle cx="9" cy="17" r="2.2" /></svg>
           </button>
-        )}
+          {view?.hasHabits && (
+            <button className="icon-btn" aria-label="Nuevo hábito" onClick={() => setForm({ open: true })}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
+          )}
+        </div>
       </header>
 
       {!view ? (
@@ -241,11 +248,15 @@ export function Hoy({ onGo }: { onGo: (tab: TabId) => void }) {
         ))}
       </Sheet>
 
+      <Sheet open={settings} label="Ajustes" title="Ajustes" onClose={() => setSettings(false)}>
+        {data && <Settings data={data} today={today} canNotify={false} onError={setToast} />}
+      </Sheet>
+
       {/* Sin animación de salida: al cerrarse no debe quedar nada encima bloqueando los toques. */}
       {hito && <Milestone {...hito} onClose={() => setHito(null)} />}
 
       <AnimatePresence>
-        {snack && !toast && !form.open && !menu.open && !plan.open && !hist.open && (
+        {snack && !toast && !form.open && !menu.open && !plan.open && !hist.open && !settings && (
           <motion.div key={snack.msg} className="toast snack" role="status" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }}>
             {snack.msg}
             <button onClick={() => { snack.undo(); setSnack(null) }}>Deshacer</button>

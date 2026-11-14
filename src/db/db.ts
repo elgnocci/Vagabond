@@ -1,8 +1,9 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
 import { toISO, type ISODate } from '../domain/dates'
+import type { Backup, BackupData } from '../domain/backup'
 import { collectVotes } from '../domain/reduce'
 import {
-  TRAMA_COLORS, type Habit, type Log, type Moment, type ReducePlan, type Rhythm, type Trama, type Todo, type TramaColor, type Urge, type Use,
+  TRAMA_COLORS, type Habit, type Log, type Meta, type Moment, type ReducePlan, type ReminderSettings, type Rhythm, type Trama, type Todo, type TramaColor, type Urge, type Use,
 } from '../domain/types'
 
 class VagabondDB extends Dexie {
@@ -12,6 +13,7 @@ class VagabondDB extends Dexie {
   uses!: EntityTable<Use, 'id'>
   urges!: EntityTable<Urge, 'id'>
   todos!: EntityTable<Todo, 'id'>
+  meta!: EntityTable<Meta, 'key'>
 
   constructor() {
     super('vagabond')
@@ -25,6 +27,7 @@ class VagabondDB extends Dexie {
       urges: '++id, habitId, date',
     })
     this.version(3).stores({ todos: 'id' })
+    this.version(4).stores({ meta: 'key' })
   }
 }
 
@@ -45,6 +48,8 @@ export interface HabitDraft {
   /** Solo para lo que se quiere dejar. `null` al editar significa conservar el plan actual. */
   plan: ReducePlan | null
   urgePlan: string
+  /** "HH:MM" o vacío. */
+  remindAt: string
 }
 
 export interface TramaDraft {
@@ -79,6 +84,7 @@ async function habitFields(draft: HabitDraft, tramaId: string) {
     moment: anchor?.moment ?? draft.moment,
     rhythm: draft.rhythm,
     minVersion: clean(draft.minVersion),
+    remindAt: draft.rhythm.kind === 'days' ? clean(draft.remindAt) : undefined,
     cue: anchor ? undefined : clean(draft.cue),
     anchorId: anchor?.id,
   }
@@ -218,6 +224,33 @@ export function deleteTodo(id: string) {
 
 export function clearDoneTodos() {
   return db.todos.filter((t) => t.done).delete()
+}
+
+export function saveReminders(value: ReminderSettings) {
+  return db.meta.put({ key: 'reminders', value })
+}
+
+const ALL = () => [db.tramas, db.habits, db.logs, db.uses, db.urges, db.todos, db.meta]
+
+export async function exportAll(): Promise<BackupData> {
+  const [tramas, habits, logs, uses, urges, todos, meta] = await Promise.all(ALL().map((t) => t.toArray()))
+  return { tramas, habits, logs, uses, urges, todos, meta } as BackupData
+}
+
+/** Reemplaza todo lo que hay en el teléfono por el contenido del respaldo. Todo o nada. */
+export function importAll(backup: Backup) {
+  const d = backup.data
+  return db.transaction('rw', ALL(), async () => {
+    await Promise.all(ALL().map((t) => t.clear()))
+    await db.tramas.bulkAdd(d.tramas)
+    await db.habits.bulkAdd(d.habits)
+    await db.logs.bulkAdd(d.logs)
+    // Los ids de estas dos tablas son automáticos: se vuelven a generar.
+    await db.uses.bulkAdd(d.uses.map(({ id: _id, ...u }) => u))
+    await db.urges.bulkAdd(d.urges.map(({ id: _id, ...u }) => u))
+    await db.todos.bulkAdd(d.todos)
+    await db.meta.bulkAdd(d.meta)
+  })
 }
 
 if (import.meta.env.DEV) (window as unknown as { __vagabond: unknown }).__vagabond = { db }

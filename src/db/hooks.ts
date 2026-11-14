@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { toISO, type ISODate } from '../domain/dates'
+import { DEFAULT_REMINDERS, type ReminderSettings } from '../domain/types'
 import { db } from './db'
 
 /** Todos los datos de la app, en vivo. `undefined` mientras cargan. */
 export function useData() {
   return useLiveQuery(async () => {
-    const [habits, tramas, logs, uses, urges, todos] = await Promise.all([
+    const [habits, tramas, logs, uses, urges, todos, meta] = await Promise.all([
       db.habits.toArray(), db.tramas.orderBy('order').toArray(), db.logs.toArray(), db.uses.toArray(), db.urges.toArray(),
-      db.todos.toArray(),
+      db.todos.toArray(), db.meta.toArray(),
     ])
-    return { habits, tramas, logs, uses, urges, todos }
+    const saved = meta.find((m) => m.key === 'reminders')?.value as Partial<ReminderSettings> | undefined
+    return { habits, tramas, logs, uses, urges, todos, reminders: { ...DEFAULT_REMINDERS, ...saved } }
   }, [])
 }
 

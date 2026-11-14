@@ -51,6 +51,8 @@ export interface Habit {
   cue?: string
   /** Apilamiento: el hábito tras el cual se hace este. */
   anchorId?: string
+  /** Hora del recordatorio, "HH:MM". Solo para hábitos de días fijos. */
+  remindAt?: string
   createdOn: ISODate
   createdAt: number
   archived: boolean
@@ -94,4 +96,19 @@ export interface Todo {
   done: boolean
   doneAt?: number
   createdAt: number
+}
+
+export interface ReminderSettings {
+  enabled: boolean
+  /** Aviso de rescate: uno al día si a esa hora todavía queda algo pendiente. */
+  rescue: boolean
+  rescueAt: string
+}
+
+export const DEFAULT_REMINDERS: ReminderSettings = { enabled: false, rescue: true, rescueAt: '20:30' }
+
+/** Ajustes guardados junto a los datos (y por eso incluidos en el respaldo). */
+export interface Meta {
+  key: string
+  value: unknown
 }

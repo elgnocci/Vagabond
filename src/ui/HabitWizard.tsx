@@ -74,6 +74,7 @@ export function HabitWizard({ tramas, habits, habit, onSubmit }: Props) {
   const [planTouched, setPlanTouched] = useState(!habit?.plan)
   const [urgePlan, setUrgePlan] = useState(habit?.urgePlan ?? '')
   const plan = useMemo(() => buildPlan(startLimit, weeks, today), [startLimit, weeks, today])
+  const [remindAt, setRemindAt] = useState(habit?.remindAt ?? '')
   const [tried, setTried] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -115,6 +116,7 @@ export function HabitWizard({ tramas, habits, habit, onSubmit }: Props) {
         kind,
         plan: reduce && planTouched ? plan : null,
         urgePlan,
+        remindAt,
         rhythm: mode === 'days'
           ? { kind: 'days', days: [...days].sort((a, b) => a - b) }
           : { kind: 'quota', period: mode, times: times[mode] },
@@ -314,6 +316,16 @@ export function HabitWizard({ tramas, habits, habit, onSubmit }: Props) {
                       <button type="button" key={m.id} className="chip plain" aria-pressed={moment === m.id} onClick={() => setMoment(m.id)}>{m.label}</button>
                     ))}
                   </div>
+                </div>
+              )}
+              {mode === 'days' && (
+                <div className="field">
+                  <label htmlFor="h-remind">Recordarme a las</label>
+                  <div className="timerow">
+                    <input id="h-remind" type="time" className="input" value={remindAt} onChange={(e) => setRemindAt(e.target.value)} />
+                    {remindAt && <button type="button" className="btn quiet" onClick={() => setRemindAt('')}>Quitar</button>}
+                  </div>
+                  <p className="help">Opcional. Los avisos se activan en Ajustes.</p>
                 </div>
               )}
               {cueText && (
