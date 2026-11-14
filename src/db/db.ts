@@ -2,7 +2,7 @@ import Dexie, { type EntityTable, type Table } from 'dexie'
 import { toISO, type ISODate } from '../domain/dates'
 import { collectVotes } from '../domain/reduce'
 import {
-  TRAMA_COLORS, type Habit, type Log, type Moment, type ReducePlan, type Rhythm, type Trama, type TramaColor, type Urge, type Use,
+  TRAMA_COLORS, type Habit, type Log, type Moment, type ReducePlan, type Rhythm, type Trama, type Todo, type TramaColor, type Urge, type Use,
 } from '../domain/types'
 
 class VagabondDB extends Dexie {
@@ -11,6 +11,7 @@ class VagabondDB extends Dexie {
   logs!: Table<Log, [string, ISODate]>
   uses!: EntityTable<Use, 'id'>
   urges!: EntityTable<Urge, 'id'>
+  todos!: EntityTable<Todo, 'id'>
 
   constructor() {
     super('vagabond')
@@ -23,6 +24,7 @@ class VagabondDB extends Dexie {
       uses: '++id, habitId, date',
       urges: '++id, habitId, date',
     })
+    this.version(3).stores({ todos: 'id' })
   }
 }
 
@@ -191,6 +193,31 @@ export async function tramaVotesOf(habitId: string, today: ISODate): Promise<num
   const tramaId = habits.find((h) => h.id === habitId)?.tramaId
   const ids = new Set(habits.filter((h) => h.tramaId === tramaId).map((h) => h.id))
   return collectVotes(habits, logs, uses, urges, today).filter((v) => ids.has(v.habitId)).length
+}
+
+export interface TodoDraft {
+  title: string
+  due: ISODate | null
+}
+
+export function createTodo(draft: TodoDraft) {
+  return db.todos.add({ id: crypto.randomUUID(), title: draft.title.trim(), due: draft.due ?? undefined, done: false, createdAt: Date.now() })
+}
+
+export function updateTodo(id: string, draft: TodoDraft) {
+  return db.todos.update(id, { title: draft.title.trim(), due: draft.due ?? undefined })
+}
+
+export function setTodoDone(id: string, done: boolean) {
+  return db.todos.update(id, { done, doneAt: done ? Date.now() : undefined })
+}
+
+export function deleteTodo(id: string) {
+  return db.todos.delete(id)
+}
+
+export function clearDoneTodos() {
+  return db.todos.filter((t) => t.done).delete()
 }
 
 if (import.meta.env.DEV) (window as unknown as { __vagabond: unknown }).__vagabond = { db }

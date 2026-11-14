@@ -4,7 +4,8 @@ import { computeStreak } from './streaks'
 import { buildToday, voteGrid } from './today'
 import { dependsOn, milestoneProgress, rhythmText, tramaStats } from './tramas'
 import { buildPlan, collectVotes, limitOn, reduceState } from './reduce'
-import type { Habit, Log, Rhythm, Urge, Use } from './types'
+import { dueLabel, groupTodos, todosForToday } from './todos'
+import type { Habit, Log, Rhythm, Todo, Urge, Use } from './types'
 
 // 2024-01-01 fue lunes.
 const MON = '2024-01-01'
@@ -319,5 +320,31 @@ describe('votos', () => {
     expect(v.reduce.map((r) => r.habit.id)).toEqual(['x'])
     expect(v.sections.flatMap((s) => s.items).map((i) => i.habit.id)).toEqual(['l'])
     expect(v).toMatchObject({ total: 1, totalVotes: 1, hasHabits: true })
+  })
+})
+
+describe('pendientes', () => {
+  const todo = (id: string, due?: number, done = false, doneAt?: number): Todo => ({
+    id, title: id, due: due === undefined ? undefined : day(due), done, doneAt, createdAt: id.charCodeAt(0),
+  })
+  const all = [todo('a', 5), todo('b', 3), todo('c'), todo('d', 1), todo('e', 3), todo('f', 2, true, 10), todo('g', undefined, true, 20), todo('h', 30)]
+
+  it('agrupa en atrasados, hoy, próximos, sin fecha y hechos, ordenados', () => {
+    const g = groupTodos(all, day(3))
+    expect(g.overdue.map((t) => t.id)).toEqual(['d'])
+    expect(g.today.map((t) => t.id)).toEqual(['b', 'e'])
+    expect(g.upcoming.map((t) => t.id)).toEqual(['a', 'h'])
+    expect(g.undated.map((t) => t.id)).toEqual(['c'])
+    expect(g.done.map((t) => t.id)).toEqual(['g', 'f'])
+  })
+  it('en Hoy van los atrasados, los de hoy y los de la próxima semana', () => {
+    expect(todosForToday(all, day(3)).map((t) => t.id)).toEqual(['d', 'b', 'e', 'a'])
+  })
+  it('nombra la fecha según lo cerca que está', () => {
+    const label = (n: number) => dueLabel(day(n), day(3)) // hoy es jueves 4 de enero
+    expect([3, 4, 2].map(label)).toEqual(['Hoy', 'Mañana', 'Ayer'])
+    expect(label(8)).toBe('Martes 9')
+    expect(label(10)).toBe('11 ene')
+    expect(label(0)).toBe('1 ene')
   })
 })

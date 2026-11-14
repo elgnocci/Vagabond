@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import {
-  addUrge, addUse, createHabit, deleteHabit, logMin, removeUrge, removeUse, toggleLog, tramaVotesOf, updateHabit, type HabitDraft,
+  addUrge, addUse, createHabit, deleteHabit, logMin, removeUrge, removeUse, setTodoDone, toggleLog, tramaVotesOf, updateHabit,
+  type HabitDraft,
 } from '../db/db'
 import { useData, useToast, useToday } from '../db/hooks'
 import { formatDay } from '../domain/dates'
 import { collectVotes } from '../domain/reduce'
 import { buildToday, voteGrid, type SectionId, type TodayItem, type TodaySection } from '../domain/today'
+import { todosForToday } from '../domain/todos'
 import { MILESTONES } from '../domain/tramas'
 import type { Habit, Trama } from '../domain/types'
 import { HabitCard } from '../ui/HabitCard'
@@ -17,6 +19,8 @@ import { Milestone } from '../ui/Milestone'
 import { ReduceCard } from '../ui/ReduceCard'
 import { ReduceSheet } from '../ui/ReduceSheet'
 import { Sheet } from '../ui/Sheet'
+import type { TabId } from '../ui/TabBar'
+import { TodoRow } from '../ui/TodoRow'
 import { EmptyState, LoadingState } from '../ui/States'
 
 const TITLES: Record<SectionId, string> = {
@@ -27,7 +31,7 @@ function sectionStatus(s: TodaySection) {
   return s.done === s.total ? <span className="ok">Completa</span> : <span>{s.done} de {s.total}</span>
 }
 
-export function Hoy() {
+export function Hoy({ onGo }: { onGo: (tab: TabId) => void }) {
   const today = useToday()
   const data = useData()
   const [form, setForm] = useState<{ open: boolean; habit?: Habit }>({ open: false })
@@ -46,6 +50,7 @@ export function Hoy() {
     [data, today],
   )
   const planItem = view?.reduce.find((r) => r.habit.id === plan.id)
+  const todos = useMemo(() => (data ? todosForToday(data.todos, today) : []), [data, today])
 
   useEffect(() => {
     if (!snack) return
@@ -185,6 +190,24 @@ export function Hoy() {
               ))}
             </section>
           ))}
+          {todos.length > 0 && (
+            <section aria-labelledby="sec-todos">
+              <div className="sec-h">
+                <h2 id="sec-todos">Pendientes</h2>
+                <button className="link go" onClick={() => onGo('pendientes')}>Ver todos</button>
+              </div>
+              {todos.slice(0, 3).map((t) => (
+                <TodoRow key={t.id} todo={t} today={today} onOpen={() => onGo('pendientes')} onToggle={() => {
+                  navigator.vibrate?.(10)
+                  setTodoDone(t.id, true).then(
+                    () => setSnack({ msg: 'Pendiente hecho.', undo: () => void setTodoDone(t.id, false) }),
+                    () => setToast('No se pudo guardar. Inténtalo de nuevo.'),
+                  )
+                }} />
+              ))}
+              {todos.length > 3 && <p className="hint" style={{ marginTop: 4 }}>y {todos.length - 3} más</p>}
+            </section>
+          )}
           {view.sections.length > 0 && data!.habits.length <= 3 && <p className="hint">Toca para marcar. Mantén presionado para más opciones.</p>}
         </>
       )}

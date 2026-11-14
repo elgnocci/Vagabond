@@ -84,3 +84,13 @@ export interface Vote {
   habitId: string
   date: ISODate
 }
+
+/** Algo que hay que hacer una vez y no es un hábito (ir al dentista). No da votos. */
+export interface Todo {
+  id: string
+  title: string
+  due?: ISODate
+  done: boolean
+  doneAt?: number
+  createdAt: number
+}
