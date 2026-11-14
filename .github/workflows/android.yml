@@ -37,23 +37,42 @@ jobs:
         id: key
         env:
           KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE" ]; then
-            echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/vagabond.jks"
-            echo "signed=true" >> "$GITHUB_OUTPUT"
-          else
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          if [ -z "$KEYSTORE" ]; then
             echo "signed=false" >> "$GITHUB_OUTPUT"
             echo "::warning::Falta el secreto ANDROID_KEYSTORE_BASE64. Se compila una versión de prueba que no se debe instalar."
+            exit 0
           fi
-          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          # Al pegar los secretos se suelen colar espacios o saltos de línea: se quitan.
+          PASSWORD="$(printf '%s' "$PASSWORD" | tr -d '[:space:]')"
+          if ! printf '%s' "$KEYSTORE" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/vagabond.jks" 2>/dev/null; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 no se puede leer: el valor quedó cortado o con caracteres de más. Vuelve a pegarlo completo."
+            exit 1
+          fi
+          SIZE=$(stat -c %s "$RUNNER_TEMP/vagabond.jks")
+          echo "La llave mide $SIZE bytes (se esperaban 2556). La contraseña tiene ${#PASSWORD} caracteres (se esperaban 24)."
+          if ! keytool -list -keystore "$RUNNER_TEMP/vagabond.jks" -storepass "$PASSWORD" -alias vagabond >/dev/null 2>&1; then
+            if [ "$SIZE" -ne 2556 ]; then
+              echo "::error::ANDROID_KEYSTORE_BASE64 quedó incompleto ($SIZE bytes de 2556). Vuelve a pegar el valor largo completo."
+            elif [ "${#PASSWORD}" -ne 24 ]; then
+              echo "::error::ANDROID_KEYSTORE_PASSWORD no es el valor correcto (tiene ${#PASSWORD} caracteres, deberían ser 24). Vuelve a pegarlo."
+            else
+              echo "::error::La llave y la contraseña no calzan. Vuelve a pegar los dos secretos."
+            fi
+            exit 1
+          fi
+          echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - name: Compilar APK firmado
         if: steps.key.outputs.signed == 'true'
         working-directory: android
         env:
           VAGABOND_KEYSTORE_FILE: ${{ runner.temp }}/vagabond.jks
-          VAGABOND_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
+          export VAGABOND_KEYSTORE_PASSWORD="$(printf '%s' "$PASSWORD" | tr -d '[:space:]')"
           ./gradlew assembleRelease --no-daemon -PversionCode=${{ github.run_number }} -PversionName=${{ steps.key.outputs.version }}
           cp app/build/outputs/apk/release/app-release.apk ../vagabond.apk
 
