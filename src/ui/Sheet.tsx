@@ -4,13 +4,16 @@ import { AnimatePresence, motion, useDragControls } from 'motion/react'
 
 interface Props {
   open: boolean
-  title: string
+  /** Nombre para lectores de pantalla. */
+  label: string
+  /** Título visible; si falta, el contenido pone el suyo. */
+  title?: string
   onClose: () => void
   children: ReactNode
 }
 
 /** Hoja inferior: se cierra tocando fuera, arrastrando el tirador hacia abajo o con Escape. */
-export function Sheet({ open, title, onClose, children }: Props) {
+export function Sheet({ open, label, title, onClose, children }: Props) {
   const drag = useDragControls()
 
   useEffect(() => {
@@ -35,14 +38,13 @@ export function Sheet({ open, title, onClose, children }: Props) {
         <>
           <motion.div key="scrim" className="scrim" onClick={onClose}
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} />
-          <motion.div key="sheet" className="sheet" role="dialog" aria-modal="true" aria-label={title}
+          <motion.div key="sheet" className="sheet" role="dialog" aria-modal="true" aria-label={label}
             initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
             transition={{ type: 'spring', stiffness: 380, damping: 36 }}
             drag="y" dragControls={drag} dragListener={false} dragConstraints={{ top: 0, bottom: 0 }} dragElastic={{ top: 0, bottom: 0.6 }}
             onDragEnd={(_, info) => { if (info.offset.y > 110 || info.velocity.y > 600) onClose() }}>
-            <div onPointerDown={(e) => drag.start(e)} style={{ touchAction: 'none', margin: '-10px 0 0', padding: '10px 0 0', cursor: 'grab' }}>
-              <h2 style={{ paddingTop: 20, marginTop: -20 }}>{title}</h2>
-            </div>
+            <div className="grab" onPointerDown={(e) => drag.start(e)} />
+            {title && <h2>{title}</h2>}
             {children}
           </motion.div>
         </>

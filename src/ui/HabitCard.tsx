@@ -3,6 +3,7 @@ import { motion } from 'motion/react'
 import type { TodayItem } from '../domain/today'
 import type { StreakInfo } from '../domain/streaks'
 import { CheckPill } from './CheckPill'
+import { lowerFirst } from './HabitWizard'
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
@@ -12,12 +13,19 @@ export function streakLabel(s: StreakInfo): string | null {
   return `${s.current} ${s.unit === 'weeks' ? 'sem' : s.current === 1 ? 'mes' : 'meses'}`
 }
 
+/** La señal del hábito ("Después de…") o, si no tiene, el nombre de su trama. */
+function cueLine(item: TodayItem): string {
+  const after = item.anchorName ? lowerFirst(item.anchorName) : item.habit.cue
+  return after ? `Después de ${after}` : item.trama?.name ?? ''
+}
+
 export function subtitle(item: TodayItem): string {
-  const { streak, habit, trama, doneToday } = item
+  const { streak, habit, doneToday } = item
+  if (item.minToday) return 'Versión de 2 minutos. Cuenta igual.'
   const p = streak.period
   if (!p || habit.rhythm.kind !== 'quota') {
     if (streak.atRisk) return streak.missedYesterday ? 'Ayer faltaste. Hoy es el que cuenta.' : 'La última vez faltaste. Hoy es el que cuenta.'
-    return trama?.name ?? ''
+    return cueLine(item)
   }
   const week = habit.rhythm.period === 'week'
   if (p.met) return week ? 'Meta de la semana cumplida' : 'Meta del mes cumplida'
@@ -34,10 +42,10 @@ const DOT_TEXT = { done: 'hecho', missed: 'fallado', off: 'sin programar', pendi
 interface Props {
   item: TodayItem
   onToggle: () => void
-  onEdit: () => void
+  onMenu: () => void
 }
 
-export function HabitCard({ item, onToggle, onEdit }: Props) {
+export function HabitCard({ item, onToggle, onMenu }: Props) {
   const { habit, trama, doneToday, streak } = item
   const timer = useRef<number | undefined>(undefined)
   const held = useRef(false)
@@ -50,11 +58,11 @@ export function HabitCard({ item, onToggle, onEdit }: Props) {
     timer.current = window.setTimeout(() => {
       held.current = true
       navigator.vibrate?.(8)
-      onEdit()
+      onMenu()
     }, 480)
   }
 
-  const cls = ['card', doneToday || met ? 'done' : '', !doneToday && streak.atRisk ? 'risk' : '', met && !doneToday ? 'met' : '']
+  const cls = ['card', doneToday || met ? 'done' : '', !doneToday && streak.atRisk ? 'risk' : '', met && !doneToday ? 'met' : '', item.linked ? 'linked' : '']
     .filter(Boolean).join(' ')
   const racha = streak.current > 0
     ? `racha de ${streak.unit === 'days' ? plural(streak.current, 'día', 'días') : streak.unit === 'weeks' ? plural(streak.current, 'semana', 'semanas') : plural(streak.current, 'mes', 'meses')}`
@@ -63,10 +71,10 @@ export function HabitCard({ item, onToggle, onEdit }: Props) {
   return (
     <motion.button
       type="button" className={cls} data-color={trama?.color ?? 'teal'} aria-pressed={doneToday}
-      aria-label={`${habit.name}. ${subtitle(item)}. ${racha}. Mantén presionado para editar.`}
+      aria-label={`${habit.name}. ${subtitle(item)}. ${racha}. Mantén presionado para más opciones.`}
       whileTap={{ scale: 0.975 }} transition={{ type: 'spring', stiffness: 600, damping: 30 }}
       onPointerDown={down} onPointerUp={cancel} onPointerLeave={cancel} onPointerCancel={cancel}
-      onContextMenu={(e) => { e.preventDefault(); cancel(); if (!held.current) { held.current = true; onEdit() } }}
+      onContextMenu={(e) => { e.preventDefault(); cancel(); if (!held.current) { held.current = true; onMenu() } }}
       onClick={() => { if (held.current) { held.current = false; return } onToggle() }}
     >
       <span className="t">

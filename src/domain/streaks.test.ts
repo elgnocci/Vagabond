@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { addDays, periodEnd, startOfWeek, weekdayMon } from './dates'
 import { computeStreak } from './streaks'
 import { buildToday, voteGrid } from './today'
+import { dependsOn, milestoneProgress, rhythmText, tramaStats } from './tramas'
 import type { Habit, Log, Rhythm } from './types'
 
 // 2024-01-01 fue lunes.
@@ -171,5 +172,74 @@ describe('matriz de votos', () => {
     expect(at(day(8))).toBe(3)
     expect(at(day(9))).toBe(1)
     expect(at(day(7))).toBe(0)
+  })
+})
+
+
+describe('apilamiento en la vista de hoy', () => {
+  const base = { tramaId: 't', moment: 'morning' as const, rhythm: daily, createdOn: MON, archived: false }
+  const a: Habit = { ...base, id: 'a', name: 'Dientes', createdAt: 1 }
+  const b: Habit = { ...base, id: 'b', name: 'Leer', createdAt: 2 }
+  const c: Habit = { ...base, id: 'c', name: 'Cama', createdAt: 3, anchorId: 'a' }
+  const d: Habit = { ...base, id: 'd', name: 'Estirar', createdAt: 4, anchorId: 'c' }
+
+  it('pone cada hábito justo después de su ancla, en cadena', () => {
+    const v = buildToday([a, b, c, d], [], [], MON)
+    expect(v.sections[0].items.map((i) => [i.habit.id, i.linked])).toEqual([
+      ['a', false], ['c', true], ['d', true], ['b', false],
+    ])
+    expect(v.sections[0].items[1].anchorName).toBe('Dientes')
+  })
+  it('si el ancla no toca hoy, el hábito aparece suelto', () => {
+    const onlyTue: Habit = { ...a, rhythm: { kind: 'days', days: [1] } }
+    const v = buildToday([onlyTue, c], [], [], MON)
+    expect(v.sections[0].items.map((i) => [i.habit.id, i.linked])).toEqual([['c', false]])
+  })
+  it('un ciclo en los datos no pierde hábitos', () => {
+    const x: Habit = { ...a, anchorId: 'c' }
+    const v = buildToday([x, c], [], [], MON)
+    expect(v.sections[0].items.map((i) => i.habit.id).sort()).toEqual(['a', 'c'])
+  })
+  it('la versión de 2 minutos cuenta como hecho y mantiene la racha', () => {
+    const logs: Log[] = [
+      { habitId: 'a', date: MON, state: 'full', at: 0 },
+      { habitId: 'a', date: day(1), state: 'min', at: 0 },
+    ]
+    const item = buildToday([a], [], logs, day(1)).sections[0].items[0]
+    expect(item).toMatchObject({ doneToday: true, minToday: true })
+    expect(item.streak.current).toBe(2)
+  })
+  it('detecta dependencias para no crear ciclos', () => {
+    const byId = new Map([a, b, c, d].map((h) => [h.id, h]))
+    expect(dependsOn(d, 'a', byId)).toBe(true)
+    expect(dependsOn(a, 'a', byId)).toBe(true)
+    expect(dependsOn(b, 'a', byId)).toBe(false)
+  })
+})
+
+describe('tramas e hitos', () => {
+  it('calcula el hito anterior, el siguiente y el avance', () => {
+    expect(milestoneProgress(0)).toEqual({ prev: 0, next: 10, ratio: 0 })
+    expect(milestoneProgress(10)).toEqual({ prev: 10, next: 25, ratio: 0 })
+    expect(milestoneProgress(40)).toMatchObject({ prev: 25, next: 50, ratio: 0.6 })
+    expect(milestoneProgress(5000)).toMatchObject({ prev: 1000, next: null, ratio: 1 })
+  })
+  it('suma los votos de cada trama a través de sus hábitos', () => {
+    const t1 = { id: 't1', name: 'A', color: 'teal' as const, order: 0, createdAt: 0 }
+    const t2 = { id: 't2', name: 'B', color: 'lila' as const, order: 1, createdAt: 0 }
+    const h = (id: string, tramaId: string): Habit => ({
+      id, tramaId, name: id, moment: 'morning', rhythm: daily, createdOn: MON, createdAt: 0, archived: false,
+    })
+    const logs: Log[] = [['x', 0], ['x', 1], ['y', 0], ['huérfano', 0]].map(([habitId, n]) => ({
+      habitId: habitId as string, date: day(n as number), state: 'full', at: 0,
+    }))
+    const stats = tramaStats([t1, t2], [h('x', 't1'), h('y', 't1')], logs)
+    expect(stats.map((s) => [s.votes, s.habits.length])).toEqual([[3, 2], [0, 0]])
+  })
+  it('describe el ritmo en palabras', () => {
+    expect(rhythmText(daily)).toBe('Todos los días')
+    expect(rhythmText({ kind: 'days', days: [0, 2, 4] })).toBe('L · M · V')
+    expect(rhythmText({ kind: 'quota', period: 'week', times: 2 })).toBe('2 veces por semana')
+    expect(rhythmText({ kind: 'quota', period: 'month', times: 1 })).toBe('1 vez por mes')
   })
 })

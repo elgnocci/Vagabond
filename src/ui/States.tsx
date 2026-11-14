@@ -43,13 +43,12 @@ export function ErrorState() {
   )
 }
 
-const SOON: Record<Exclude<TabId, 'hoy'>, { title: string; text: string }> = {
-  tramas: { title: 'Tramas', text: 'Aquí vas a ver quién estás eligiendo ser, y los votos que lleva cada trama.' },
+const SOON: Record<Exclude<TabId, 'hoy' | 'tramas'>, { title: string; text: string }> = {
   pendientes: { title: 'Pendientes', text: 'Lo que tienes que hacer una vez y no es un hábito, como ir al dentista.' },
   progreso: { title: 'Progreso', text: 'Tu historia completa: votos acumulados, rachas y constancia.' },
 }
 
-export function ComingSoon({ tab }: { tab: Exclude<TabId, 'hoy'> }) {
+export function ComingSoon({ tab }: { tab: Exclude<TabId, 'hoy' | 'tramas'> }) {
   return (
     <div className="screen">
       <div className="state">

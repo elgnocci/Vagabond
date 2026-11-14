@@ -9,6 +9,11 @@ export interface TodayItem {
   habit: Habit
   trama?: Trama
   doneToday: boolean
+  /** Hoy se marcó la versión de 2 minutos. */
+  minToday: boolean
+  /** Va justo después de su hábito ancla en la lista de hoy. */
+  linked: boolean
+  anchorName?: string
   streak: StreakInfo
   /** Últimos 7 días, del más antiguo a hoy. */
   dots: DotState[]
@@ -37,11 +42,14 @@ const ORDER: SectionId[] = ['morning', 'afternoon', 'night', 'week', 'month']
 
 export function buildToday(habits: Habit[], tramas: Trama[], logs: Log[], today: ISODate): TodayView {
   const tramaById = new Map(tramas.map((t) => [t.id, t]))
+  const habitById = new Map(habits.map((h) => [h.id, h]))
   const doneByHabit = new Map<string, Set<ISODate>>()
+  const minToday = new Set<string>()
   for (const l of logs) {
     let set = doneByHabit.get(l.habitId)
     if (!set) doneByHabit.set(l.habitId, (set = new Set()))
     set.add(l.date)
+    if (l.date === today && l.state === 'min') minToday.add(l.habitId)
   }
 
   const active = habits.filter((h) => !h.archived).sort((a, b) => a.createdAt - b.createdAt)
@@ -56,6 +64,9 @@ export function buildToday(habits: Habit[], tramas: Trama[], logs: Log[], today:
       habit,
       trama: tramaById.get(habit.tramaId),
       doneToday,
+      minToday: minToday.has(habit.id),
+      linked: false,
+      anchorName: habit.anchorId ? habitById.get(habit.anchorId)?.name : undefined,
       streak: computeStreak(habit, dates, today),
       dots: weekDots(habit, dates, today),
     }
@@ -78,8 +89,8 @@ export function buildToday(habits: Habit[], tramas: Trama[], logs: Log[], today:
   }
 
   const sections = ORDER.filter((id) => buckets.has(id)).map((id) => {
-    const items = buckets.get(id)!
     const isQuota = id === 'week' || id === 'month'
+    const items = isQuota ? buckets.get(id)! : stackOrder(buckets.get(id)!)
     return {
       id,
       items,
@@ -99,6 +110,29 @@ export function buildToday(habits: Habit[], tramas: Trama[], logs: Log[], today:
     dayNumber: first ? diffDays(first, today) + 1 : null,
     hasHabits: active.length > 0,
   }
+}
+
+/** Pone cada hábito apilado justo después de su ancla, si el ancla también toca hoy en esta sección. */
+function stackOrder(items: TodayItem[]): TodayItem[] {
+  const ids = new Set(items.map((i) => i.habit.id))
+  const children = new Map<string, TodayItem[]>()
+  const roots: TodayItem[] = []
+  for (const item of items) {
+    const a = item.habit.anchorId
+    if (a && a !== item.habit.id && ids.has(a)) children.set(a, [...(children.get(a) ?? []), item])
+    else roots.push(item)
+  }
+  const out: TodayItem[] = []
+  const seen = new Set<string>()
+  const visit = (item: TodayItem, linked: boolean) => {
+    if (seen.has(item.habit.id)) return
+    seen.add(item.habit.id)
+    out.push(linked ? { ...item, linked: true } : item)
+    for (const child of children.get(item.habit.id) ?? []) visit(child, true)
+  }
+  roots.forEach((r) => visit(r, false))
+  items.forEach((i) => visit(i, false)) // por si hubiera un ciclo en los datos
+  return out
 }
 
 function weekDots(habit: Habit, dates: ReadonlySet<ISODate>, today: ISODate): DotState[] {

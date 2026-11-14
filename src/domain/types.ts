@@ -14,6 +14,8 @@ export type Rhythm =
 export interface Trama {
   id: string
   name: string
+  /** Frase de identidad: completa "Soy alguien que…". */
+  identity?: string
   color: TramaColor
   order: number
   createdAt: number
@@ -25,6 +27,12 @@ export interface Habit {
   name: string
   moment: Moment
   rhythm: Rhythm
+  /** Versión de 2 minutos, para los días malos. */
+  minVersion?: string
+  /** Señal libre: completa "Después de…". */
+  cue?: string
+  /** Apilamiento: el hábito tras el cual se hace este. */
+  anchorId?: string
   createdOn: ISODate
   createdAt: number
   archived: boolean

@@ -1,33 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useLiveQuery } from 'dexie-react-hooks'
 import { AnimatePresence, motion } from 'motion/react'
-import { createHabit, db, deleteHabit, toggleLog, updateHabit, type HabitDraft } from '../db/db'
-import { formatDay, toISO, type ISODate } from '../domain/dates'
-import { buildToday, voteGrid, type SectionId, type TodaySection } from '../domain/today'
-import type { Habit } from '../domain/types'
+import { createHabit, deleteHabit, logMin, toggleLog, tramaVotesOf, updateHabit, type HabitDraft } from '../db/db'
+import { useData, useToast, useToday } from '../db/hooks'
+import { formatDay } from '../domain/dates'
+import { buildToday, voteGrid, type SectionId, type TodayItem, type TodaySection } from '../domain/today'
+import { MILESTONES } from '../domain/tramas'
+import type { Habit, Trama } from '../domain/types'
 import { HabitCard } from '../ui/HabitCard'
-import { HabitForm } from '../ui/HabitForm'
+import { HabitMenu } from '../ui/HabitMenu'
+import { HabitWizard } from '../ui/HabitWizard'
 import { Hero } from '../ui/Hero'
+import { Milestone } from '../ui/Milestone'
 import { Sheet } from '../ui/Sheet'
 import { EmptyState, LoadingState } from '../ui/States'
 
 const TITLES: Record<SectionId, string> = {
   morning: 'Mañana', afternoon: 'Tarde', night: 'Noche', week: 'Esta semana', month: 'Este mes',
-}
-
-/** La fecha de hoy; se actualiza al volver a la app y al pasar la medianoche. */
-function useToday(): ISODate {
-  const [today, setToday] = useState(() => toISO(new Date()))
-  useEffect(() => {
-    const check = () => setToday(toISO(new Date()))
-    const id = window.setInterval(check, 60_000)
-    document.addEventListener('visibilitychange', check)
-    return () => {
-      window.clearInterval(id)
-      document.removeEventListener('visibilitychange', check)
-    }
-  }, [])
-  return today
 }
 
 function sectionStatus(s: TodaySection) {
@@ -36,23 +24,20 @@ function sectionStatus(s: TodaySection) {
 
 export function Hoy() {
   const today = useToday()
-  const data = useLiveQuery(async () => {
-    const [habits, tramas, logs] = await Promise.all([db.habits.toArray(), db.tramas.orderBy('order').toArray(), db.logs.toArray()])
-    return { habits, tramas, logs }
-  }, [])
-
+  const data = useData()
   const [form, setForm] = useState<{ open: boolean; habit?: Habit }>({ open: false })
-  const [toast, setToast] = useState<string | null>(null)
+  const [menu, setMenu] = useState<{ open: boolean; id?: string }>({ open: false })
+  const [hito, setHito] = useState<{ trama: Trama; votes: number } | null>(null)
+  const [toast, setToast] = useToast()
   const closeForm = useCallback(() => setForm((f) => ({ ...f, open: false })), [])
+  const closeMenu = useCallback(() => setMenu((m) => ({ ...m, open: false })), [])
 
   const view = useMemo(() => data && buildToday(data.habits, data.tramas, data.logs, today), [data, today])
   const grid = useMemo(() => (data ? voteGrid(data.logs, today) : []), [data, today])
-
-  useEffect(() => {
-    if (!toast) return
-    const id = window.setTimeout(() => setToast(null), 4000)
-    return () => window.clearTimeout(id)
-  }, [toast])
+  const menuItem: TodayItem | undefined = useMemo(
+    () => view?.sections.flatMap((s) => s.items).find((i) => i.habit.id === menu.id),
+    [view, menu.id],
+  )
 
   // Vibración más larga cuando el día pasa a estar completo.
   const wasDone = useRef<boolean | null>(null)
@@ -62,9 +47,27 @@ export function Hoy() {
     wasDone.current = view.allDone
   }, [view])
 
-  async function toggle(habitId: string) {
+  /** Tras sumar un voto: vibra y, si la trama llegó a un hito, lo celebra. */
+  async function voted(habit: Habit) {
+    navigator.vibrate?.(12)
+    const votes = await tramaVotesOf(habit.id)
+    const trama = data?.tramas.find((t) => t.id === habit.tramaId)
+    if (trama && MILESTONES.includes(votes)) window.setTimeout(() => setHito({ trama, votes }), 450)
+  }
+
+  async function toggle(habit: Habit) {
     try {
-      if (await toggleLog(habitId, today)) navigator.vibrate?.(12)
+      if (await toggleLog(habit.id, today)) await voted(habit)
+    } catch {
+      setToast('No se pudo guardar. Inténtalo de nuevo.')
+    }
+  }
+
+  async function markMin(habit: Habit) {
+    closeMenu()
+    try {
+      await logMin(habit.id, today)
+      await voted(habit)
     } catch {
       setToast('No se pudo guardar. Inténtalo de nuevo.')
     }
@@ -80,11 +83,10 @@ export function Hoy() {
     }
   }
 
-  async function remove() {
-    if (!form.habit) return
+  async function remove(habit: Habit) {
+    closeMenu()
     try {
-      await deleteHabit(form.habit.id)
-      closeForm()
+      await deleteHabit(habit.id)
     } catch {
       setToast('No se pudo eliminar. Inténtalo de nuevo.')
     }
@@ -99,7 +101,7 @@ export function Hoy() {
         </h1>
         {view?.hasHabits && (
           <button className="icon-btn" aria-label="Nuevo hábito" onClick={() => setForm({ open: true })}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.600" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           </button>
         )}
       </header>
@@ -124,19 +126,29 @@ export function Hoy() {
                 {sectionStatus(s)}
               </div>
               {s.items.map((item) => (
-                <HabitCard key={item.habit.id} item={item} onToggle={() => toggle(item.habit.id)}
-                  onEdit={() => setForm({ open: true, habit: item.habit })} />
+                <HabitCard key={item.habit.id} item={item} onToggle={() => toggle(item.habit)}
+                  onMenu={() => setMenu({ open: true, id: item.habit.id })} />
               ))}
             </section>
           ))}
-          {data!.habits.length <= 3 && <p className="hint">Toca para marcar. Mantén presionado para editar.</p>}
+          {data!.habits.length <= 3 && <p className="hint">Toca para marcar. Mantén presionado para más opciones.</p>}
         </>
       )}
 
-      <Sheet open={form.open} title={form.habit ? 'Editar hábito' : 'Nuevo hábito'} onClose={closeForm}>
-        <HabitForm key={form.habit?.id ?? 'new'} tramas={data?.tramas ?? []} habit={form.habit}
-          onSubmit={save} onDelete={form.habit ? remove : undefined} />
+      <Sheet open={form.open} label={form.habit ? 'Editar hábito' : 'Nuevo hábito'} onClose={closeForm}>
+        <HabitWizard key={form.habit?.id ?? 'new'} tramas={data?.tramas ?? []} habits={data?.habits ?? []} habit={form.habit} onSubmit={save} />
       </Sheet>
+
+      <Sheet open={menu.open && !!menuItem} label="Opciones del hábito" onClose={closeMenu}>
+        {menuItem && (
+          <HabitMenu key={menuItem.habit.id} item={menuItem} onMin={() => markMin(menuItem.habit)}
+            onEdit={() => { closeMenu(); setForm({ open: true, habit: menuItem.habit }) }}
+            onDelete={() => remove(menuItem.habit)} />
+        )}
+      </Sheet>
+
+      {/* Sin animación de salida: al cerrarse no debe quedar nada encima bloqueando los toques. */}
+      {hito && <Milestone {...hito} onClose={() => setHito(null)} />}
 
       <AnimatePresence>
         {toast && (
