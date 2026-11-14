@@ -60,3 +60,9 @@ export function formatDay(s: ISODate): string {
   const d = fromISO(s)
   return `${DAYS[weekdayMon(s)]} ${d.getDate()} ${MONTHS[d.getMonth()]}`
 }
+
+/** "14 nov" */
+export function formatShort(s: ISODate): string {
+  const d = fromISO(s)
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`
+}

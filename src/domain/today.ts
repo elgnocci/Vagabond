@@ -1,6 +1,7 @@
 import { addDays, diffDays, startOfWeek, weekdayMon, type ISODate } from './dates'
 import { computeStreak, type StreakInfo } from './streaks'
-import type { Habit, Log, Moment, Trama } from './types'
+import { collectVotes, reduceState, type ReduceState } from './reduce'
+import type { Habit, Log, Moment, Trama, Urge, Use } from './types'
 
 export type DotState = 'done' | 'missed' | 'off' | 'pending'
 export type SectionId = Moment | 'week' | 'month'
@@ -26,8 +27,16 @@ export interface TodaySection {
   total: number
 }
 
+export interface ReduceItem {
+  habit: Habit
+  trama?: Trama
+  state: ReduceState
+}
+
 export interface TodayView {
   sections: TodaySection[]
+  /** Lo que se está dejando (tabaco). No entra en el avance del día. */
+  reduce: ReduceItem[]
   /** Avance del día: hábitos de días fijos que tocan hoy, más los de meta marcados hoy. */
   done: number
   total: number
@@ -40,7 +49,9 @@ export interface TodayView {
 
 const ORDER: SectionId[] = ['morning', 'afternoon', 'night', 'week', 'month']
 
-export function buildToday(habits: Habit[], tramas: Trama[], logs: Log[], today: ISODate): TodayView {
+export function buildToday(
+  habits: Habit[], tramas: Trama[], logs: Log[], today: ISODate, uses: Use[] = [], urges: Urge[] = [],
+): TodayView {
   const tramaById = new Map(tramas.map((t) => [t.id, t]))
   const habitById = new Map(habits.map((h) => [h.id, h]))
   const doneByHabit = new Map<string, Set<ISODate>>()
@@ -57,7 +68,13 @@ export function buildToday(habits: Habit[], tramas: Trama[], logs: Log[], today:
   let done = 0
   let total = 0
 
+  const reduce: ReduceItem[] = []
+
   for (const habit of active) {
+    if (habit.kind === 'reduce') {
+      reduce.push({ habit, trama: tramaById.get(habit.tramaId), state: reduceState(habit, uses, urges, today) })
+      continue
+    }
     const dates = doneByHabit.get(habit.id) ?? new Set<ISODate>()
     const doneToday = dates.has(today)
     const item: TodayItem = {
@@ -103,10 +120,11 @@ export function buildToday(habits: Habit[], tramas: Trama[], logs: Log[], today:
 
   return {
     sections,
+    reduce,
     done,
     total,
     allDone: total > 0 && done === total,
-    totalVotes: logs.length,
+    totalVotes: collectVotes(habits, logs, uses, urges, today).length,
     dayNumber: first ? diffDays(first, today) + 1 : null,
     hasHabits: active.length > 0,
   }
@@ -157,9 +175,9 @@ export interface GridCell {
 }
 
 /** Matriz de votos: semanas completas de lunes a domingo, terminando en la semana actual. */
-export function voteGrid(logs: Log[], today: ISODate, weeks = 5): GridCell[] {
+export function voteGrid(votes: { date: ISODate }[], today: ISODate, weeks = 5): GridCell[] {
   const counts = new Map<ISODate, number>()
-  for (const l of logs) counts.set(l.date, (counts.get(l.date) ?? 0) + 1)
+  for (const l of votes) counts.set(l.date, (counts.get(l.date) ?? 0) + 1)
   const start = addDays(startOfWeek(today), -7 * (weeks - 1))
   const dates = Array.from({ length: weeks * 7 }, (_, i) => addDays(start, i))
   const max = Math.max(1, ...dates.map((d) => counts.get(d) ?? 0))

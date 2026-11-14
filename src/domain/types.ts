@@ -11,6 +11,18 @@ export type Rhythm =
   | { kind: 'days'; days: number[] }
   | { kind: 'quota'; period: Period; times: number }
 
+export interface ReduceStage {
+  from: ISODate
+  /** Tope diario desde esa fecha. */
+  limit: number
+}
+
+/** Plan para dejar algo: topes que bajan por etapas hasta llegar a cero en `quitDate`. */
+export interface ReducePlan {
+  stages: ReduceStage[]
+  quitDate: ISODate
+}
+
 export interface Trama {
   id: string
   name: string
@@ -25,6 +37,11 @@ export interface Habit {
   id: string
   tramaId: string
   name: string
+  /** 'reduce' = algo que se quiere dejar (tabaco). Si falta, es un hábito a construir. */
+  kind?: 'build' | 'reduce'
+  plan?: ReducePlan
+  /** Qué hacer cuando venga el antojo: completa "Voy a…". */
+  urgePlan?: string
   moment: Moment
   rhythm: Rhythm
   /** Versión de 2 minutos, para los días malos. */
@@ -44,4 +61,26 @@ export interface Log {
   date: ISODate
   state: 'full' | 'min'
   at: number
+}
+
+/** Una vez que se consumió lo que se quiere dejar (un cigarro). */
+export interface Use {
+  id?: number
+  habitId: string
+  date: ISODate
+  at: number
+}
+
+/** Un antojo resistido. Cada uno es un voto. */
+export interface Urge {
+  id?: number
+  habitId: string
+  date: ISODate
+  at: number
+}
+
+/** Un voto, venga de donde venga. */
+export interface Vote {
+  habitId: string
+  date: ISODate
 }

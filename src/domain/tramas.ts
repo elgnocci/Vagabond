@@ -1,4 +1,4 @@
-import type { Habit, Log, Rhythm, Trama } from './types'
+import type { Habit, Rhythm, Trama } from './types'
 
 export const MILESTONES = [10, 25, 50, 100, 250, 500, 1000]
 
@@ -29,7 +29,7 @@ export interface TramaStats {
   habits: Habit[]
 }
 
-export function tramaStats(tramas: Trama[], habits: Habit[], logs: Log[]): TramaStats[] {
+export function tramaStats(tramas: Trama[], habits: Habit[], logs: { habitId: string }[]): TramaStats[] {
   const tramaOf = new Map(habits.map((h) => [h.id, h.tramaId]))
   const votes = new Map<string, number>()
   for (const l of logs) {

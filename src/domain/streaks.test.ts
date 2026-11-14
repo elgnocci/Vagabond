@@ -3,7 +3,8 @@ import { addDays, periodEnd, startOfWeek, weekdayMon } from './dates'
 import { computeStreak } from './streaks'
 import { buildToday, voteGrid } from './today'
 import { dependsOn, milestoneProgress, rhythmText, tramaStats } from './tramas'
-import type { Habit, Log, Rhythm } from './types'
+import { buildPlan, collectVotes, limitOn, reduceState } from './reduce'
+import type { Habit, Log, Rhythm, Urge, Use } from './types'
 
 // 2024-01-01 fue lunes.
 const MON = '2024-01-01'
@@ -241,5 +242,82 @@ describe('tramas e hitos', () => {
     expect(rhythmText({ kind: 'days', days: [0, 2, 4] })).toBe('L · M · V')
     expect(rhythmText({ kind: 'quota', period: 'week', times: 2 })).toBe('2 veces por semana')
     expect(rhythmText({ kind: 'quota', period: 'month', times: 1 })).toBe('1 vez por mes')
+  })
+})
+
+describe('plan de reducción', () => {
+  it('baja el tope por semanas hasta la fecha final', () => {
+    const plan = buildPlan(6, 4, MON)
+    expect(plan.stages).toEqual([
+      { from: MON, limit: 6 }, { from: day(7), limit: 5 }, { from: day(14), limit: 3 }, { from: day(21), limit: 2 },
+    ])
+    expect(plan.quitDate).toBe(day(28))
+  })
+  it('nunca baja de 1 antes de la fecha final y junta etapas iguales', () => {
+    const plan = buildPlan(2, 6, MON)
+    expect(plan.stages.map((s) => s.limit)).toEqual([2, 1])
+    expect(plan.stages[1].from).toBe(day(14))
+  })
+  it('el tope del día sale de la etapa vigente y es cero desde la fecha final', () => {
+    const plan = buildPlan(6, 4, MON)
+    expect([0, 6, 7, 20, 21, 27, 28, 100].map((n) => limitOn(plan, day(n)))).toEqual([6, 6, 5, 3, 2, 2, 0, 0])
+  })
+})
+
+describe('estado del tabaco', () => {
+  const tabaco = { id: 'x', createdOn: MON, plan: buildPlan(3, 2, MON) } // tope 3, luego 2, cero el día 14
+  const use = (n: number, times = 1): Use[] => Array.from({ length: times }, () => ({ habitId: 'x', date: day(n), at: 0 }))
+  const urge = (n: number): Urge => ({ habitId: 'x', date: day(n), at: 0 })
+
+  it('cuenta lo de hoy contra el tope', () => {
+    const s = reduceState(tabaco, use(2, 2), [urge(2), urge(1)], day(2))
+    expect(s).toMatchObject({ limit: 3, used: 2, over: false, resistedToday: 1, resistedTotal: 2 })
+  })
+  it('un día dentro del tope vale; hoy no cuenta hasta que termina', () => {
+    const s = reduceState(tabaco, [...use(0, 3), ...use(1, 1), ...use(2, 1)], [], day(2))
+    expect(s.okDays).toEqual([MON, day(1)])
+    expect(s.streak).toBe(2)
+  })
+  it('pasarse un día no rompe la racha; dos seguidos sí', () => {
+    const one = reduceState(tabaco, use(2, 4), [], day(4))
+    expect(one).toMatchObject({ streak: 3, atRisk: false })
+    const two = reduceState(tabaco, [...use(2, 4), ...use(3, 4)], [], day(5))
+    expect(two.streak).toBe(1)
+  })
+  it('tras pasarse ayer, hoy queda en riesgo; si hoy también, ya no', () => {
+    expect(reduceState(tabaco, use(3, 4), [], day(4))).toMatchObject({ atRisk: true, over: false, streak: 3 })
+    expect(reduceState(tabaco, [...use(3, 4), ...use(4, 4)], [], day(4))).toMatchObject({ atRisk: false, over: true, streak: 0 })
+  })
+  it('desde la fecha final el tope es cero', () => {
+    const s = reduceState(tabaco, use(14), [], day(14))
+    expect(s).toMatchObject({ limit: 0, quit: true, over: true, daysToQuit: 0 })
+    expect(reduceState(tabaco, [], [], day(10)).daysToQuit).toBe(4)
+  })
+})
+
+describe('votos', () => {
+  const base = { tramaId: 't', name: 'x', moment: 'morning' as const, rhythm: daily, createdOn: MON, createdAt: 0, archived: false }
+  const tabaco: Habit = { ...base, id: 'x', kind: 'reduce', plan: buildPlan(3, 2, MON) }
+  const leer: Habit = { ...base, id: 'l' }
+
+  it('suman hábitos cumplidos, antojos resistidos y días cerrados dentro del tope', () => {
+    const logs: Log[] = [{ habitId: 'l', date: MON, state: 'full', at: 0 }]
+    const uses: Use[] = Array.from({ length: 4 }, () => ({ habitId: 'x', date: day(1), at: 0 })) // martes se pasó
+    const urges: Urge[] = [{ habitId: 'x', date: day(2), at: 0 }]
+    const votes = collectVotes([tabaco, leer], logs, uses, urges, day(3))
+    // 1 hábito + 1 antojo + lunes y miércoles dentro del tope
+    expect(votes).toHaveLength(4)
+    expect(votes.filter((v) => v.habitId === 'x').map((v) => v.date).sort()).toEqual([MON, day(2), day(2)])
+  })
+  it('pasarse hoy no quita votos ya ganados', () => {
+    const before = collectVotes([tabaco], [], [], [], day(3)).length
+    const uses: Use[] = Array.from({ length: 9 }, () => ({ habitId: 'x', date: day(3), at: 0 }))
+    expect(collectVotes([tabaco], [], uses, [], day(3)).length).toBe(before)
+  })
+  it('lo que se deja aparece aparte y no entra en el avance del día', () => {
+    const v = buildToday([tabaco, leer], [], [], day(1))
+    expect(v.reduce.map((r) => r.habit.id)).toEqual(['x'])
+    expect(v.sections.flatMap((s) => s.items).map((i) => i.habit.id)).toEqual(['l'])
+    expect(v).toMatchObject({ total: 1, totalVotes: 1, hasHabits: true })
   })
 })

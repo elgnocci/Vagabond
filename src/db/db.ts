@@ -1,11 +1,16 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
 import { toISO, type ISODate } from '../domain/dates'
-import { TRAMA_COLORS, type Habit, type Log, type Moment, type Rhythm, type Trama, type TramaColor } from '../domain/types'
+import { collectVotes } from '../domain/reduce'
+import {
+  TRAMA_COLORS, type Habit, type Log, type Moment, type ReducePlan, type Rhythm, type Trama, type TramaColor, type Urge, type Use,
+} from '../domain/types'
 
 class VagabondDB extends Dexie {
   tramas!: EntityTable<Trama, 'id'>
   habits!: EntityTable<Habit, 'id'>
   logs!: Table<Log, [string, ISODate]>
+  uses!: EntityTable<Use, 'id'>
+  urges!: EntityTable<Urge, 'id'>
 
   constructor() {
     super('vagabond')
@@ -13,6 +18,10 @@ class VagabondDB extends Dexie {
       tramas: 'id, order',
       habits: 'id, tramaId',
       logs: '[habitId+date], habitId, date',
+    })
+    this.version(2).stores({
+      uses: '++id, habitId, date',
+      urges: '++id, habitId, date',
     })
   }
 }
@@ -30,6 +39,10 @@ export interface HabitDraft {
   minVersion: string
   cue: string
   anchorId: string | null
+  kind: 'build' | 'reduce'
+  /** Solo para lo que se quiere dejar. `null` al editar significa conservar el plan actual. */
+  plan: ReducePlan | null
+  urgePlan: string
 }
 
 export interface TramaDraft {
@@ -51,6 +64,12 @@ async function nextColor(): Promise<{ color: TramaColor; order: number }> {
 
 /** Campos del hábito que salen del asistente. Si hay ancla, hereda su momento del día. */
 async function habitFields(draft: HabitDraft, tramaId: string) {
+  if (draft.kind === 'reduce') {
+    return {
+      tramaId, name: draft.name.trim(), kind: 'reduce' as const, urgePlan: clean(draft.urgePlan),
+      ...(draft.plan ? { plan: draft.plan } : {}),
+    }
+  }
   const anchor = draft.anchorId ? await db.habits.get(draft.anchorId) : undefined
   return {
     tramaId,
@@ -78,6 +97,8 @@ export function createHabit(draft: HabitDraft) {
     const tramaId = await resolveTrama(draft)
     await db.habits.add({
       id: crypto.randomUUID(),
+      moment: 'morning',
+      rhythm: { kind: 'days', days: [0, 1, 2, 3, 4, 5, 6] },
       ...(await habitFields(draft, tramaId)),
       createdOn: toISO(new Date()),
       createdAt: Date.now(),
@@ -93,14 +114,16 @@ export function updateHabit(id: string, draft: HabitDraft) {
     await db.habits.update(id, fields)
     // Los hábitos apilados sobre este lo siguen si cambió de momento.
     const followers = await db.habits.filter((h) => h.anchorId === id).toArray()
-    for (const f of followers) await db.habits.update(f.id, { moment: fields.moment })
+    if ('moment' in fields) for (const f of followers) await db.habits.update(f.id, { moment: fields.moment })
   })
 }
 
 /** Borra el hábito y sus votos. Los hábitos apilados sobre él quedan sueltos. */
 export function deleteHabit(id: string) {
-  return db.transaction('rw', db.habits, db.logs, async () => {
+  return db.transaction('rw', db.habits, db.logs, db.uses, db.urges, async () => {
     await db.logs.where('habitId').equals(id).delete()
+    await db.uses.where('habitId').equals(id).delete()
+    await db.urges.where('habitId').equals(id).delete()
     await db.habits.delete(id)
     await db.habits.filter((h) => h.anchorId === id).modify({ anchorId: undefined })
   })
@@ -131,14 +154,6 @@ export function logMin(habitId: string, date: ISODate) {
   return db.logs.put({ habitId, date, state: 'min', at: Date.now() })
 }
 
-/** Votos que lleva la trama de un hábito. */
-export async function tramaVotesOf(habitId: string): Promise<number> {
-  const habit = await db.habits.get(habitId)
-  if (!habit) return 0
-  const ids = (await db.habits.where('tramaId').equals(habit.tramaId).toArray()).map((h) => h.id)
-  return db.logs.where('habitId').anyOf(ids).count()
-}
-
 /** Marca o desmarca un día. Devuelve true si quedó marcado. */
 export function toggleLog(habitId: string, date: ISODate): Promise<boolean> {
   return db.transaction('rw', db.logs, async () => {
@@ -150,6 +165,32 @@ export function toggleLog(habitId: string, date: ISODate): Promise<boolean> {
     await db.logs.put({ habitId, date, state: 'full', at: Date.now() })
     return true
   })
+}
+
+/** Registra una vez consumida (un cigarro). Devuelve su id, para poder deshacer. */
+export function addUse(habitId: string, date: ISODate): Promise<number> {
+  return db.uses.add({ habitId, date, at: Date.now() }) as Promise<number>
+}
+
+export function removeUse(id: number) {
+  return db.uses.delete(id)
+}
+
+/** Registra un antojo resistido. Devuelve su id, para poder deshacer. */
+export function addUrge(habitId: string, date: ISODate): Promise<number> {
+  return db.urges.add({ habitId, date, at: Date.now() }) as Promise<number>
+}
+
+export function removeUrge(id: number) {
+  return db.urges.delete(id)
+}
+
+/** Votos que lleva la trama de un hábito, leídos directo de la base. */
+export async function tramaVotesOf(habitId: string, today: ISODate): Promise<number> {
+  const [habits, logs, uses, urges] = await Promise.all([db.habits.toArray(), db.logs.toArray(), db.uses.toArray(), db.urges.toArray()])
+  const tramaId = habits.find((h) => h.id === habitId)?.tramaId
+  const ids = new Set(habits.filter((h) => h.tramaId === tramaId).map((h) => h.id))
+  return collectVotes(habits, logs, uses, urges, today).filter((v) => ids.has(v.habitId)).length
 }
 
 if (import.meta.env.DEV) (window as unknown as { __vagabond: unknown }).__vagabond = { db }

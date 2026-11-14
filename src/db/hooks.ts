@@ -6,8 +6,10 @@ import { db } from './db'
 /** Todos los datos de la app, en vivo. `undefined` mientras cargan. */
 export function useData() {
   return useLiveQuery(async () => {
-    const [habits, tramas, logs] = await Promise.all([db.habits.toArray(), db.tramas.orderBy('order').toArray(), db.logs.toArray()])
-    return { habits, tramas, logs }
+    const [habits, tramas, logs, uses, urges] = await Promise.all([
+      db.habits.toArray(), db.tramas.orderBy('order').toArray(), db.logs.toArray(), db.uses.toArray(), db.urges.toArray(),
+    ])
+    return { habits, tramas, logs, uses, urges }
   }, [])
 }
 

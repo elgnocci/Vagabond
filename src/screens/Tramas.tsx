@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { createTrama, deleteTrama, updateTrama, type TramaDraft } from '../db/db'
 import { useData, useToast, useToday } from '../db/hooks'
+import { collectVotes, limitOn, reduceState } from '../domain/reduce'
 import { computeStreak } from '../domain/streaks'
 import { MILESTONES, milestoneProgress, rhythmText, tramaStats, type TramaStats } from '../domain/tramas'
 import { TRAMA_COLORS, type Trama } from '../domain/types'
@@ -29,7 +30,10 @@ export function Tramas() {
   const [toast, setToast] = useToast()
   const closeForm = useCallback(() => setForm((f) => ({ ...f, open: false })), [])
 
-  const stats = useMemo(() => (data ? tramaStats(data.tramas, data.habits, data.logs) : undefined), [data])
+  const stats = useMemo(
+    () => (data ? tramaStats(data.tramas, data.habits, collectVotes(data.habits, data.logs, data.uses, data.urges, today)) : undefined),
+    [data, today],
+  )
   const current = stats?.find((s) => s.trama.id === selected)
   const suggested = TRAMA_COLORS.find((c) => !data?.tramas.some((t) => t.color === c)) ?? 'teal'
 
@@ -58,7 +62,7 @@ export function Tramas() {
   return (
     <main className="screen">
       {current ? (
-        <Detail s={current} today={today} logs={data!.logs} onBack={() => setSelected(null)} onEdit={() => setForm({ open: true, trama: current.trama })} />
+        <Detail s={current} today={today} data={data!} onBack={() => setSelected(null)} onEdit={() => setForm({ open: true, trama: current.trama })} />
       ) : (
         <>
           <header className="head">
@@ -115,12 +119,12 @@ export function Tramas() {
 interface DetailProps {
   s: TramaStats
   today: string
-  logs: { habitId: string; date: string }[]
+  data: NonNullable<ReturnType<typeof useData>>
   onBack: () => void
   onEdit: () => void
 }
 
-function Detail({ s, today, logs, onBack, onEdit }: DetailProps) {
+function Detail({ s, today, data, onBack, onEdit }: DetailProps) {
   const { next } = milestoneProgress(s.votes)
   const unit = { days: ['día', 'días'], weeks: ['semana', 'semanas'], months: ['mes', 'meses'] } as const
   return (
@@ -150,7 +154,19 @@ function Detail({ s, today, logs, onBack, onEdit }: DetailProps) {
       <div className="sec-h"><h2>Hábitos</h2><span>{s.habits.length}</span></div>
       {s.habits.length === 0 && <p className="note" style={{ textAlign: 'left', margin: '0 4px' }}>Esta trama aún no tiene hábitos. Créalos desde Hoy con el botón +.</p>}
       {s.habits.map((h) => {
-        const streak = computeStreak(h, new Set(logs.filter((l) => l.habitId === h.id).map((l) => l.date)), today)
+        if (h.kind === 'reduce') {
+          const st = reduceState(h, data.uses, data.urges, today)
+          return (
+            <div className="hrow" key={h.id}>
+              <div>
+                <b>{h.name}</b>
+                <span>Plan de reducción · {h.plan && !st.quit ? `tope de hoy ${limitOn(h.plan, today)}` : 'en cero'}</span>
+              </div>
+              <em>{st.streak}<small>{unit.days[st.streak === 1 ? 0 : 1]}</small></em>
+            </div>
+          )
+        }
+        const streak = computeStreak(h, new Set(data.logs.filter((l) => l.habitId === h.id).map((l) => l.date)), today)
         return (
           <div className="hrow" key={h.id}>
             <div>
