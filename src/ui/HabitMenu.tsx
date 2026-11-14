@@ -6,11 +6,12 @@ interface Props {
   item: TodayItem
   onMin: () => void
   onEdit: () => void
+  onHistory: () => void
   onDelete: () => void
 }
 
 /** Opciones de un hábito: versión de 2 minutos, editar y eliminar. */
-export function HabitMenu({ item, onMin, onEdit, onDelete }: Props) {
+export function HabitMenu({ item, onMin, onEdit, onHistory, onDelete }: Props) {
   const [confirming, setConfirming] = useState(false)
   const { habit, trama, doneToday } = item
   return (
@@ -29,6 +30,7 @@ export function HabitMenu({ item, onMin, onEdit, onDelete }: Props) {
             <small>Para los días malos: presentarte cuenta igual.</small>
           </button>
         ))}
+        <button className="row" onClick={onHistory}>Ver historial<small>Rachas, constancia y calendario para corregir días.</small></button>
         <button className="row" onClick={onEdit}>Editar hábito</button>
         <button className="row danger" onClick={() => (confirming ? onDelete() : setConfirming(true))}>
           {confirming ? 'Sí, eliminar el hábito y sus votos' : 'Eliminar hábito'}

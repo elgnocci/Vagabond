@@ -41,20 +41,3 @@ export function ErrorState() {
     </div>
   )
 }
-
-const SOON: Record<'progreso', { title: string; text: string }> = {
-  progreso: { title: 'Progreso', text: 'Tu historia completa: votos acumulados, rachas y constancia.' },
-}
-
-export function ComingSoon({ tab }: { tab: 'progreso' }) {
-  return (
-    <div className="screen">
-      <div className="state">
-        <Seed />
-        <h2>{SOON[tab].title}</h2>
-        <p>{SOON[tab].text}</p>
-        <p className="mono" style={{ marginTop: 24 }}>Llega en una próxima etapa</p>
-      </div>
-    </div>
-  )
-}

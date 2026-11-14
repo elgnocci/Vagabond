@@ -1,7 +1,8 @@
 import type { ISODate } from './dates'
 
 export type TramaColor = 'teal' | 'lila' | 'rosa' | 'lima' | 'cielo'
-export const TRAMA_COLORS: TramaColor[] = ['teal', 'lila', 'rosa', 'lima', 'cielo']
+/** Orden fijo: así se asignan a las tramas nuevas y así se distinguen mejor entre vecinos. */
+export const TRAMA_COLORS: TramaColor[] = ['teal', 'lila', 'lima', 'rosa', 'cielo']
 
 export type Moment = 'morning' | 'afternoon' | 'night'
 export type Period = 'week' | 'month'

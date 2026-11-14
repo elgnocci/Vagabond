@@ -12,13 +12,14 @@
   --on-color: #0b0d0d;
   --scrim: rgba(0, 0, 0, 0.6);
 
-  /* Cada color significa una sola cosa. */
+  /* Cada color significa una sola cosa. Los de trama, en este orden, pasan la prueba de
+     separación entre vecinos (también para daltonismo); se usan así en los gráficos. */
   --teal: #56d8c2;   /* trama y acción principal */
   --teal-tx: #56d8c2; /* turquesa para texto; más oscuro en tema claro */
-  --lila: #aeb8f5;   /* trama */
-  --rosa: #f0a8c8;   /* trama */
-  --lima: #bfe89a;   /* trama */
-  --cielo: #8fcbf0;  /* trama */
+  --lila: #a9aefc;   /* trama */
+  --lima: #c4ea8c;   /* trama */
+  --rosa: #f79cc3;   /* trama */
+  --cielo: #7cc6f7;  /* trama */
   --amber: #f0c36e;  /* atención: racha en riesgo */
   --coral: #ee9c80;  /* lo que se quiere reducir, errores */
 

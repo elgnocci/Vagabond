@@ -66,3 +66,16 @@ export function formatShort(s: ISODate): string {
   const d = fromISO(s)
   return `${d.getDate()} ${MONTHS[d.getMonth()]}`
 }
+
+const MONTH_NAMES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+
+/** "noviembre 2026" */
+export function formatMonth(s: ISODate): string {
+  const d = fromISO(s)
+  return `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`
+}
+
+export function addMonths(monthStart: ISODate, n: number): ISODate {
+  const d = fromISO(monthStart)
+  return toISO(new Date(d.getFullYear(), d.getMonth() + n, 1, 12))
+}

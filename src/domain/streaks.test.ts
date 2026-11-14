@@ -3,6 +3,7 @@ import { addDays, periodEnd, startOfWeek, weekdayMon } from './dates'
 import { computeStreak } from './streaks'
 import { buildToday, voteGrid } from './today'
 import { dependsOn, milestoneProgress, rhythmText, tramaStats } from './tramas'
+import { activeDays, bestStreak, cumulativeSeries, habitRate, monthGrid, weekCompare } from './progress'
 import { buildPlan, collectVotes, limitOn, reduceState } from './reduce'
 import { dueLabel, groupTodos, todosForToday } from './todos'
 import type { Habit, Log, Rhythm, Todo, Urge, Use } from './types'
@@ -346,5 +347,47 @@ describe('pendientes', () => {
     expect(label(8)).toBe('Martes 9')
     expect(label(10)).toBe('11 ene')
     expect(label(0)).toBe('1 ene')
+  })
+})
+
+describe('progreso', () => {
+  const v = (...ns: number[]) => ns.map((n) => ({ date: day(n) }))
+
+  it('acumula votos día a día, partiendo de lo anterior al rango', () => {
+    const s = cumulativeSeries(v(0, 0, 1, 3, 3, 3), day(1), day(4))
+    expect(s.map((p) => [p.total, p.added])).toEqual([[3, 1], [3, 0], [6, 3], [6, 0]])
+    expect(s[0].date).toBe(day(1))
+  })
+  it('compara esta semana con la anterior', () => {
+    expect(weekCompare(v(0, 1, 6, 7, 8, 8, 20), day(9))).toEqual({ thisWeek: 3, lastWeek: 3 })
+  })
+  it('cuenta días con al menos un voto', () => {
+    expect(activeDays(v(0, 0, 1, 5))).toBe(3)
+  })
+  it('constancia de días fijos: hecho sobre lo que tocaba, sin castigar hoy pendiente', () => {
+    const h: Habit = { id: 'h', tramaId: 't', name: 'h', moment: 'morning', rhythm: { kind: 'days', days: [0, 2, 4] }, createdOn: MON, createdAt: 0, archived: false }
+    // lunes y viernes hechos, miércoles fallado; hoy es el lunes siguiente, pendiente
+    expect(habitRate(h, set(0, 4), day(7))).toEqual({ done: 2, expected: 3, ratio: 2 / 3 })
+    expect(habitRate(h, set(0, 4, 7), day(7))).toMatchObject({ done: 3, expected: 4 })
+  })
+  it('constancia de meta semanal: veces hechas sobre las esperadas en el período', () => {
+    const h: Habit = { id: 'h', tramaId: 't', name: 'h', moment: 'morning', rhythm: { kind: 'quota', period: 'week', times: 2 }, createdOn: MON, createdAt: 0, archived: false }
+    expect(habitRate(h, set(0, 3, 8), day(13))).toEqual({ done: 3, expected: 4, ratio: 0.75 })
+  })
+  it('encuentra la mejor racha aunque ya se haya roto', () => {
+    const done = set(0, 1, 2, 3, 4, 9, 10)
+    expect(computeStreak(habit(daily), done, day(10)).current).toBe(2)
+    expect(bestStreak(habit(daily), done, day(10))).toBe(5)
+  })
+  it('mejor racha de un hábito semanal, en semanas', () => {
+    const twice: Rhythm = { kind: 'quota', period: 'week', times: 2 }
+    expect(bestStreak(habit(twice), set(0, 1, 7, 8, 14, 15, 42, 43), day(44))).toBe(3)
+  })
+  it('arma el mes en filas de lunes a domingo', () => {
+    const feb = monthGrid('2024-02-01') // parte un jueves, 29 días
+    expect(feb).toHaveLength(35)
+    expect(feb.slice(0, 4)).toEqual([null, null, null, '2024-02-01'])
+    expect(feb.filter(Boolean)).toHaveLength(29)
+    expect(monthGrid(MON)[0]).toBe(MON)
   })
 })

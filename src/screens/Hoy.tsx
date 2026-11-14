@@ -12,6 +12,7 @@ import { todosForToday } from '../domain/todos'
 import { MILESTONES } from '../domain/tramas'
 import type { Habit, Trama } from '../domain/types'
 import { HabitCard } from '../ui/HabitCard'
+import { HabitDetail } from '../ui/HabitDetail'
 import { HabitMenu } from '../ui/HabitMenu'
 import { HabitWizard } from '../ui/HabitWizard'
 import { Hero } from '../ui/Hero'
@@ -38,6 +39,7 @@ export function Hoy({ onGo }: { onGo: (tab: TabId) => void }) {
   const [menu, setMenu] = useState<{ open: boolean; id?: string }>({ open: false })
   const [hito, setHito] = useState<{ trama: Trama; votes: number } | null>(null)
   const [plan, setPlan] = useState<{ open: boolean; id?: string }>({ open: false })
+  const [hist, setHist] = useState<{ open: boolean; id?: string }>({ open: false })
   const [snack, setSnack] = useState<{ msg: string; undo: () => void } | null>(null)
   const [toast, setToast] = useToast()
   const closeForm = useCallback(() => setForm((f) => ({ ...f, open: false })), [])
@@ -220,6 +222,7 @@ export function Hoy({ onGo }: { onGo: (tab: TabId) => void }) {
         {menuItem && (
           <HabitMenu key={menuItem.habit.id} item={menuItem} onMin={() => markMin(menuItem.habit)}
             onEdit={() => { closeMenu(); setForm({ open: true, habit: menuItem.habit }) }}
+            onHistory={() => { closeMenu(); setHist({ open: true, id: menuItem.habit.id }) }}
             onDelete={() => remove(menuItem.habit)} />
         )}
       </Sheet>
@@ -232,11 +235,17 @@ export function Hoy({ onGo }: { onGo: (tab: TabId) => void }) {
         )}
       </Sheet>
 
+      <Sheet open={hist.open} label="Historial del hábito" onClose={() => setHist((h) => ({ ...h, open: false }))}>
+        {data && data.habits.filter((h) => h.id === hist.id).map((h) => (
+          <HabitDetail key={h.id} habit={h} data={data} today={today} onError={setToast} />
+        ))}
+      </Sheet>
+
       {/* Sin animación de salida: al cerrarse no debe quedar nada encima bloqueando los toques. */}
       {hito && <Milestone {...hito} onClose={() => setHito(null)} />}
 
       <AnimatePresence>
-        {snack && !toast && !form.open && !menu.open && !plan.open && (
+        {snack && !toast && !form.open && !menu.open && !plan.open && !hist.open && (
           <motion.div key={snack.msg} className="toast snack" role="status" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }}>
             {snack.msg}
             <button onClick={() => { snack.undo(); setSnack(null) }}>Deshacer</button>
