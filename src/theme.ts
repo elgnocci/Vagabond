@@ -1,3 +1,5 @@
+import { Capacitor, SystemBars, SystemBarsStyle } from '@capacitor/core'
+
 export type Theme = 'system' | 'dark' | 'light'
 const KEY = 'vagabond-theme'
 const BAR = { dark: '#0b0d0d', light: '#f3f5f4' }
@@ -22,6 +24,11 @@ export function setTheme(theme: Theme) {
   const root = document.documentElement
   if (theme === 'system') root.removeAttribute('data-theme')
   else root.setAttribute('data-theme', theme)
+  // En Android, los íconos de la barra de estado deben contrastar con el fondo elegido.
+  if (Capacitor.isNativePlatform()) {
+    const style = theme === 'dark' ? SystemBarsStyle.Dark : theme === 'light' ? SystemBarsStyle.Light : SystemBarsStyle.Default
+    void SystemBars.setStyle({ style }).catch(() => {})
+  }
   // La barra del sistema toma el color del tema elegido.
   document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((m) => {
     const scheme = m.media.includes('light') ? 'light' : 'dark'

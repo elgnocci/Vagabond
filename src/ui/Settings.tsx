@@ -6,6 +6,7 @@ import { buildBackup, describeBackup, parseBackup, type Backup } from '../domain
 import { formatDay, toISO, type ISODate } from '../domain/dates'
 import { planReminders } from '../domain/reminders'
 import type { ReminderSettings } from '../domain/types'
+import { canNotify, ensurePermission, saveFile } from '../notify'
 import { getTheme, setTheme, type Theme } from '../theme'
 
 const THEMES: { id: Theme; label: string }[] = [{ id: 'system', label: 'Sistema' }, { id: 'dark', label: 'Oscuro' }, { id: 'light', label: 'Claro' }]
@@ -21,12 +22,10 @@ function Switch({ on, label, onChange }: { on: boolean; label: string; onChange:
 interface Props {
   data: NonNullable<ReturnType<typeof useData>>
   today: ISODate
-  /** Los avisos solo se entregan dentro de la app Android. */
-  canNotify: boolean
   onError: (msg: string) => void
 }
 
-export function Settings({ data, today, canNotify, onError }: Props) {
+export function Settings({ data, today, onError }: Props) {
   const [theme, setThemeState] = useState(getTheme)
   const [pending, setPending] = useState<Backup | null>(null)
   const [note, setNote] = useState<string | null>(null)
@@ -35,6 +34,15 @@ export function Settings({ data, today, canNotify, onError }: Props) {
 
   const update = (patch: Partial<ReminderSettings>) =>
     saveReminders({ ...r, ...patch }).catch(() => onError('No se pudo guardar. Inténtalo de nuevo.'))
+
+  /** Al encender en Android se pide el permiso; si se niega, quedan apagados. */
+  async function enable(v: boolean) {
+    if (v && canNotify && !(await ensurePermission().catch(() => false))) {
+      onError('Android no dio permiso para mostrar avisos. Actívalo en los ajustes del teléfono.')
+      return
+    }
+    await update({ enabled: v })
+  }
 
   const upcoming = useMemo(() => {
     const now = new Date()
@@ -46,21 +54,11 @@ export function Settings({ data, today, canNotify, onError }: Props) {
   async function exportBackup() {
     try {
       const text = JSON.stringify(buildBackup(await exportAll(), new Date()))
-      const name = `vagabond-${toISO(new Date())}.json`
-      const blob = new File([text], name, { type: 'application/json' })
-      // En el teléfono se ofrece compartir o guardar; en otros casos se descarga.
-      if (navigator.canShare?.({ files: [blob] })) {
-        await navigator.share({ files: [blob], title: 'Respaldo de Vagabond' })
-      } else {
-        const a = document.createElement('a')
-        a.href = URL.createObjectURL(blob)
-        a.download = name
-        a.click()
-        URL.revokeObjectURL(a.href)
-      }
+      await saveFile(`vagabond-${toISO(new Date())}.json`, text, 'Respaldo de Vagabond')
       setNote('Respaldo creado. Guárdalo fuera del teléfono.')
     } catch (e) {
-      if ((e as Error)?.name !== 'AbortError') onError('No se pudo crear el respaldo.')
+      // Cerrar el menú de compartir sin elegir nada no es un error.
+      if (!/abort|cancel/i.test(`${(e as Error)?.name} ${(e as Error)?.message}`)) onError('No se pudo crear el respaldo.')
     }
   }
 
@@ -103,7 +101,7 @@ export function Settings({ data, today, canNotify, onError }: Props) {
         <div className="rows">
           <div className="srow">
             <span><b>Avisarme</b><small>A la hora que le pongas a cada hábito.</small></span>
-            <Switch on={r.enabled} label="Recordatorios" onChange={(v) => void update({ enabled: v })} />
+            <Switch on={r.enabled} label="Recordatorios" onChange={(v) => void enable(v)} />
           </div>
           {r.enabled && (
             <>
@@ -135,7 +133,7 @@ export function Settings({ data, today, canNotify, onError }: Props) {
             ) : (
               <p className="help">No hay avisos por delante. {withTime === 0 ? 'Ponle hora a un hábito al editarlo, en el último paso.' : ''}</p>
             )}
-            {!canNotify && <p className="help warn">En esta versión web los avisos no llegan con la app cerrada. Van a funcionar en la app para Android.</p>}
+            {!canNotify && <p className="help warn">En esta versión web los avisos no llegan con la app cerrada. Para recibirlos, instala la app para Android.</p>}
           </>
         )}
       </div>

@@ -249,7 +249,7 @@ export function Hoy({ onGo }: { onGo: (tab: TabId) => void }) {
       </Sheet>
 
       <Sheet open={settings} label="Ajustes" title="Ajustes" onClose={() => setSettings(false)}>
-        {data && <Settings data={data} today={today} canNotify={false} onError={setToast} />}
+        {data && <Settings data={data} today={today} onError={setToast} />}
       </Sheet>
 
       {/* Sin animación de salida: al cerrarse no debe quedar nada encima bloqueando los toques. */}

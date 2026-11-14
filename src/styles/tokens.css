@@ -33,6 +33,9 @@
   --gutter: 20px;
   --tap: 48px;
   --tabbar: 68px;
+  /* Márgenes de las barras del sistema. La app Android informa los suyos en --safe-area-inset-*. */
+  --inset-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --inset-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
 }
 
 @media (prefers-color-scheme: light) {

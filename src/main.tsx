@@ -6,13 +6,14 @@ import '@fontsource/instrument-serif/400-italic.css'
 import '@fontsource-variable/jetbrains-mono'
 import './styles/tokens.css'
 import './styles/app.css'
+import { Capacitor } from '@capacitor/core'
 import { App } from './App'
 import { getTheme, setTheme } from './theme'
 
 setTheme(getTheme())
 
-// Fuera de desarrollo, guarda la app para que abra sin conexión.
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+// En la web publicada, guarda la app para que abra sin conexión. La app Android ya la lleva dentro.
+if (import.meta.env.PROD && !Capacitor.isNativePlatform() && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => void navigator.serviceWorker.register('./sw.js').catch(() => {}))
 }
 
