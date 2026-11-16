@@ -1,0 +1,99 @@
+name: Compilar app Android
+
+on:
+  push:
+    branches: [main, claude/atomic-habits-app-ud1rfx]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npx cap sync android
+
+      # La llave de firma vive en los secretos del repo, nunca en el código.
+      - name: Preparar la llave de firma
+        id: key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          if [ -z "$KEYSTORE" ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Falta el secreto ANDROID_KEYSTORE_BASE64. Se compila una versión de prueba que no se debe instalar."
+            exit 0
+          fi
+          # Al pegar los secretos se suelen colar espacios o saltos de línea: se quitan.
+          PASSWORD="$(printf '%s' "$PASSWORD" | tr -d '[:space:]')"
+          if ! printf '%s' "$KEYSTORE" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/vagabond.jks" 2>/dev/null; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 no se puede leer: el valor quedó cortado o con caracteres de más. Vuelve a pegarlo completo."
+            exit 1
+          fi
+          SIZE=$(stat -c %s "$RUNNER_TEMP/vagabond.jks")
+          echo "La llave mide $SIZE bytes (se esperaban 2556). La contraseña tiene ${#PASSWORD} caracteres (se esperaban 24)."
+          if ! keytool -list -keystore "$RUNNER_TEMP/vagabond.jks" -storepass "$PASSWORD" -alias vagabond >/dev/null 2>&1; then
+            if [ "$SIZE" -ne 2556 ]; then
+              echo "::error::ANDROID_KEYSTORE_BASE64 quedó incompleto ($SIZE bytes de 2556). Vuelve a pegar el valor largo completo."
+            elif [ "${#PASSWORD}" -ne 24 ]; then
+              echo "::error::ANDROID_KEYSTORE_PASSWORD no es el valor correcto (tiene ${#PASSWORD} caracteres, deberían ser 24). Vuelve a pegarlo."
+            else
+              echo "::error::La llave y la contraseña no calzan. Vuelve a pegar los dos secretos."
+            fi
+            exit 1
+          fi
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Compilar APK firmado
+        if: steps.key.outputs.signed == 'true'
+        working-directory: android
+        env:
+          VAGABOND_KEYSTORE_FILE: ${{ runner.temp }}/vagabond.jks
+          PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          export VAGABOND_KEYSTORE_PASSWORD="$(printf '%s' "$PASSWORD" | tr -d '[:space:]')"
+          ./gradlew assembleRelease --no-daemon -PversionCode=${{ github.run_number }} -PversionName=${{ steps.key.outputs.version }}
+          cp app/build/outputs/apk/release/app-release.apk ../vagabond.apk
+
+      - name: Compilar versión de prueba (sin llave)
+        if: steps.key.outputs.signed == 'false'
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Guardar el APK
+        if: steps.key.outputs.signed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vagabond-apk
+          path: vagabond.apk
+
+      # En main, además se publica como descarga directa en la página de Releases.
+      - name: Publicar en Releases
+        if: steps.key.outputs.signed == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view android >/dev/null 2>&1 || gh release create android --title "Vagabond para Android" \
+            --notes "Descarga vagabond.apk e instálalo en tu teléfono. Se actualiza solo con cada cambio en main."
+          gh release upload android vagabond.apk --clobber

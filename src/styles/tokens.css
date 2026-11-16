@@ -1,0 +1,62 @@
+/* Sistema de diseño de Vagabond. Oscuro es el tema principal; claro usa los mismos tokens. */
+:root {
+  color-scheme: dark;
+  --bg: #0b0d0d;
+  --card: #161919;
+  --card-2: #1f2424;
+  --tx: #eef2f0;
+  --dim: #8a9693;
+  --faint: #6c7875;
+  --line: #394240;
+  --track: #2a3230;
+  --on-color: #0b0d0d;
+  --scrim: rgba(0, 0, 0, 0.6);
+
+  /* Cada color significa una sola cosa. Los de trama, en este orden, pasan la prueba de
+     separación entre vecinos (también para daltonismo); se usan así en los gráficos. */
+  --teal: #56d8c2;   /* trama y acción principal */
+  --teal-tx: #56d8c2; /* turquesa para texto; más oscuro en tema claro */
+  --lila: #a9aefc;   /* trama */
+  --lima: #c4ea8c;   /* trama */
+  --rosa: #f79cc3;   /* trama */
+  --cielo: #7cc6f7;  /* trama */
+  --amber: #f0c36e;  /* atención: racha en riesgo */
+  --coral: #ee9c80;  /* lo que se quiere reducir, errores */
+
+  --font: 'Figtree Variable', system-ui, sans-serif;
+  --serif: 'Instrument Serif', Georgia, serif;
+  --mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+
+  /* Espaciado en pasos de 4. */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
+  --r-card: 22px; --r-hero: 28px; --r-pill: 999px;
+  --gutter: 20px;
+  --tap: 48px;
+  --tabbar: 68px;
+  /* Márgenes de las barras del sistema. La app Android informa los suyos en --safe-area-inset-*. */
+  --inset-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --inset-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+    --bg: #f3f5f4; --card: #ffffff; --card-2: #eaeeec; --tx: #101514; --dim: #5a6763; --faint: #7b8884;
+    --line: #c6cfcc; --track: #e2e7e5; --on-color: #08100f; --scrim: rgba(16, 21, 20, 0.35);
+    --teal: #1fa890; --lila: #7c86e0; --rosa: #d9689c; --lima: #6baa3a; --cielo: #3c96d0;
+    --amber: #8f6208; --coral: #c2512f; --teal-tx: #0c7a68;
+  }
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f3f5f4; --card: #ffffff; --card-2: #eaeeec; --tx: #101514; --dim: #5a6763; --faint: #7b8884;
+  --line: #c6cfcc; --track: #e2e7e5; --on-color: #08100f; --scrim: rgba(16, 21, 20, 0.35);
+  --teal: #1fa890; --lila: #7c86e0; --rosa: #d9689c; --lima: #6baa3a; --cielo: #3c96d0;
+  --amber: #8f6208; --coral: #c2512f; --teal-tx: #0c7a68;
+}
+
+[data-color='teal'] { --c: var(--teal); }
+[data-color='lila'] { --c: var(--lila); }
+[data-color='rosa'] { --c: var(--rosa); }
+[data-color='lima'] { --c: var(--lima); }
+[data-color='cielo'] { --c: var(--cielo); }

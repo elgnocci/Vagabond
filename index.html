@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0B0D0D" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#F3F5F4" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="Hábitos como votos por quien quieres ser." />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <title>Vagabond</title>
+    <script>
+      // Aplica el tema guardado antes de pintar, para que no parpadee.
+      try { var t = localStorage.getItem('vagabond-theme'); if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t) } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
