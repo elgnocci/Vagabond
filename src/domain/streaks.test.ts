@@ -5,6 +5,7 @@ import { buildToday, voteGrid } from './today'
 import { dependsOn, layoutConstellation, milestoneProgress, rhythmText, tramaStats } from './tramas'
 import { buildBackup, describeBackup, parseBackup } from './backup'
 import { buildChapter, buildChapters, type ChapterData } from './chapters'
+import { formatPct, formatTimes, growthSeries, yearProjection, type GrowthData } from './growth'
 import { activeDays, bestStreak, cumulativeSeries, habitRate, monthGrid, weekCompare } from './progress'
 import { buildPlan, collectVotes, freezeDays, limitOn, reduceState } from './reduce'
 import { planReminders } from './reminders'
@@ -682,5 +683,55 @@ describe('capítulos semanales', () => {
   it('sugiere subir un paso cuando casi todo fue la versión de 2 minutos', () => {
     const c = buildChapter(data([0, 1, 2, 3, 4].map((d) => log(d, 'min'))), MON, 1)
     expect(c.lines.some((l) => l.startsWith('Leer: 5 de 5 veces fue la versión de 2 minutos.'))).toBe(true)
+  })
+})
+
+describe('el 1% diario', () => {
+  const base = { tramaId: 't', moment: 'morning' as const, rhythm: daily, createdOn: MON, archived: false }
+  const a: Habit = { ...base, id: 'a', name: 'A', createdAt: 1 }
+  const b: Habit = { ...base, id: 'b', name: 'B', createdAt: 2 }
+  const log = (habitId: string, n: number): Log => ({ habitId, date: day(n), state: 'full', at: 0 })
+  const data = (habits: Habit[], logs: Log[], extra: Partial<GrowthData> = {}): GrowthData => ({ habits, logs, uses: [], urges: [], closures: [], pauses: [], ...extra })
+  const factors = (s: ReturnType<typeof growthSeries>) => s.map((d) => +d.factor.toFixed(4))
+
+  it('un día cumplido suma 1%, uno a medias suma la mitad y uno en blanco resta 1%', () => {
+    const s = growthSeries(data([a, b], [log('a', 0), log('b', 0), log('a', 1)]), day(3))
+    expect(factors(s)).toEqual([1.01, 1.005, 0.99, 1]) // hoy pendiente no resta
+    expect(s[2].value).toBeCloseTo(1.01 * 1.005 * 0.99, 10)
+    expect(s[3]).toMatchObject({ done: 0, total: 2 })
+  })
+  it('los días se multiplican: 30 días seguidos son más que 30%', () => {
+    const logs = Array.from({ length: 30 }, (_, n) => log('a', n))
+    const s = growthSeries(data([a], logs), day(30))
+    expect(s[29].value).toBeCloseTo(Math.pow(1.01, 30), 10)
+    expect(s[29].value).toBeGreaterThan(1.3)
+    expect(s[29].ideal).toBeCloseTo(s[29].value, 10)
+  })
+  it('hoy puede sumar antes de terminar', () => {
+    expect(factors(growthSeries(data([a, b], [log('a', 0)]), MON))).toEqual([1.005])
+  })
+  it('los días sin nada programado y los días en pausa no mueven la curva', () => {
+    const lmv: Habit = { ...a, rhythm: { kind: 'days', days: [0, 2, 4] } }
+    expect(factors(growthSeries(data([lmv], [log('a', 0)]), day(2)))).toEqual([1.01, 1, 1])
+    const paused = growthSeries(data([a], [log('a', 0)], { pauses: [{ from: day(1), to: day(2) }] }), day(4))
+    expect(factors(paused)).toEqual([1.01, 1, 1, 0.99, 1])
+  })
+  it('varias veces al día cuenta en proporción, y el tabaco solo los días con registro', () => {
+    const tres: Habit = { ...a, slots: [{ moment: 'morning' }, { moment: 'afternoon' }, { moment: 'night' }] }
+    const logs: Log[] = [{ habitId: 'a', date: MON, state: 'full', at: 0, slots: ['morning', 'night'] }]
+    expect(growthSeries(data([tres], logs), day(1))[0]).toMatchObject({ done: 2, total: 3 })
+    const tabaco: Habit = { ...base, id: 'x', name: 'Tabaco', createdAt: 3, kind: 'reduce', plan: buildPlan(3, 2, MON) }
+    const uses: Use[] = [{ habitId: 'x', date: MON, at: 0 }, ...Array.from({ length: 5 }, () => ({ habitId: 'x', date: day(1), at: 0 }))]
+    // lunes dentro del tope, martes sobre el tope, miércoles sin registro
+    expect(factors(growthSeries(data([tabaco], [], { uses }), day(3)))).toEqual([1.01, 0.99, 1, 1])
+  })
+  it('proyecta un año a partir del ritmo reciente, con al menos una semana de datos', () => {
+    const logs = Array.from({ length: 10 }, (_, n) => log('a', n))
+    const s = growthSeries(data([a], logs), day(10))
+    expect(yearProjection(s, day(10))).toBeCloseTo(Math.pow(1.01, 365), 6) // ≈ 37,8
+    expect(yearProjection(s.slice(0, 5), day(4))).toBeNull()
+    expect(formatTimes(37.78)).toBe('×37,8')
+    expect(formatTimes(1.234)).toBe('×1,23')
+    expect([formatPct(1.032), formatPct(0.99)]).toEqual(['+3,2%', '−1,0%'])
   })
 })

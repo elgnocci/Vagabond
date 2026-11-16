@@ -19,7 +19,8 @@ export const isMulti = (habit: Habit) => !!habit.slots && habit.slots.length > 1
 /** Momentos ya hechos en un registro. Un hábito de una vez al día tiene hecho su único momento. */
 export function doneSlots(habit: Habit, log: Log | undefined): Moment[] {
   if (!log) return []
-  return isMulti(habit) ? log.slots ?? [] : [slotsOf(habit)[0].moment]
+  // Un registro anterior a que el hábito pasara a varias veces al día vale por su primer momento.
+  return isMulti(habit) ? log.slots ?? [habit.slots![0].moment] : [slotsOf(habit)[0].moment]
 }
 
 export interface TodayItem {

@@ -479,3 +479,20 @@ a.btn { text-decoration: none; }
 [data-color='lima'].edge, [data-color='lima'].bridge { stroke: var(--lima); }
 [data-color='rosa'].edge, [data-color='rosa'].bridge { stroke: var(--rosa); }
 [data-color='cielo'].edge, [data-color='cielo'].bridge { stroke: var(--cielo); }
+
+/* ── El 1% diario ── */
+.strip .t { position: relative; }
+.strip .gain { position: absolute; right: 0; top: 0; font: 600 11px var(--mono); color: var(--teal-tx); }
+.strip .t > span:first-child { padding-right: 78px; }
+.grow-n { font: 400 56px/1 var(--serif); letter-spacing: -0.02em; margin-top: 2px; }
+.grow-s { font-size: 14px; line-height: 1.4; color: var(--dim); margin: 6px 0 var(--s3); }
+.grow-s b { color: var(--tx); font-weight: 700; }
+.chart.growth .legend { display: flex; gap: var(--s4); font-size: 12px; font-weight: 600; color: var(--dim); margin-bottom: 2px; }
+.chart.growth .legend span { display: inline-flex; align-items: center; gap: 6px; }
+.chart.growth .legend i { width: 14px; height: 2px; border-radius: 1px; }
+.chart.growth .legend .mine { background: var(--teal); }
+.chart.growth .legend .ideal { background: var(--faint); }
+.chart .ref { fill: none; stroke: var(--faint); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.chart .end.ref-l { fill: var(--dim); font-weight: 600; }
+.chart.growth .end { text-anchor: start; }
+.panel .help { margin-top: var(--s2); }

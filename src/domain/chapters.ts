@@ -1,4 +1,5 @@
 import { addDays, diffDays, formatShort, startOfWeek, weekdayMon, toISO, type ISODate } from './dates'
+import { formatPct, growthSeries } from './growth'
 import { isPaused } from './pauses'
 import { collectVotes, reduceDays } from './reduce'
 import { computeStreak, rhythmStart } from './streaks'
@@ -100,6 +101,15 @@ export function buildChapter(data: ChapterData, start: ISODate, number: number):
     )
   }
   if (topStreak) lines.push(`${topStreak.name} cerró la semana con ${topStreak.value} días de racha.`)
+
+  // El 1% diario: cuánto se movió la curva compuesta entre el lunes y el domingo.
+  const growth = growthSeries(data, end).filter((g) => inWeek(g.date))
+  const moved = growth.reduce((p, g) => p * g.factor, 1)
+  if (growth.length > 0 && Math.abs(moved - 1) >= 0.001) {
+    lines.push(moved > 1
+      ? `Cerraste la semana ${formatPct(moved).slice(1)} mejor que como la empezaste.`
+      : `La semana cerró ${formatPct(moved).slice(1)} más abajo. Un día en blanco pesa; uno cumplido lo recupera.`)
+  }
 
   for (const h of live) {
     if (h.kind !== 'reduce' || h.archived || h.createdOn > end) continue

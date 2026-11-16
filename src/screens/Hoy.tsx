@@ -8,6 +8,7 @@ import { useData, useHour, useToast, useToday } from '../db/hooks'
 import { getDayEnd } from '../day'
 import { buildChapters } from '../domain/chapters'
 import { addDays, formatDay } from '../domain/dates'
+import { formatPct, growthSeries } from '../domain/growth'
 import { togglePause } from '../domain/pauses'
 import { buildToday, momentAt, type SectionId, type TodayItem, type TodaySection } from '../domain/today'
 import { todosForToday } from '../domain/todos'
@@ -96,6 +97,11 @@ export function Hoy({ onGo }: { onGo: (tab: TabId) => void }) {
   const planItem = view?.reduce.find((r) => r.habit.id === plan.id)
   const todos = useMemo(() => (data ? todosForToday(data.todos, today) : []), [data, today])
   const chapter = useMemo(() => (data ? buildChapters(data, today, 1)[0] : undefined), [data, today])
+  // Cuánto lleva sumado hoy a la curva del 1% diario.
+  const gain = useMemo(() => {
+    const g = data ? growthSeries(data, today).at(-1) : undefined
+    return g && g.factor > 1 ? formatPct(g.factor) : null
+  }, [data, today])
   const freshChapter = chapter && chapter.start > seenChapter ? chapter : undefined
   // De madrugada, antes de que cierre el día, todavía es la noche de ese día.
   const nowMoment = hour < getDayEnd() ? 'night' : momentAt(hour)
@@ -240,7 +246,7 @@ export function Hoy({ onGo }: { onGo: (tab: TabId) => void }) {
         <EmptyState onCreate={() => setForm({ open: true })} />
       ) : (
         <>
-          <Strip votes={view.totalVotes} done={view.done} total={view.total} allDone={view.allDone} paused={view.paused} onOpen={() => onGo('progreso')} />
+          <Strip votes={view.totalVotes} done={view.done} total={view.total} allDone={view.allDone} paused={view.paused} gain={gain} onOpen={() => onGo('progreso')} />
 
           {freshChapter && (
             <button type="button" className="note-card" onClick={readChapter}>

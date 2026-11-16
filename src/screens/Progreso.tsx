@@ -3,11 +3,13 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useData, useToast, useToday } from '../db/hooks'
 import { buildChapters, type Chapter } from '../domain/chapters'
 import { addDays, type ISODate } from '../domain/dates'
+import { formatPct, formatTimes, growthSeries, yearProjection } from '../domain/growth'
 import { activeDays, bestStreak, cumulativeSeries, habitRate, reduceRate, weekCompare } from '../domain/progress'
 import { collectVotes, reduceState } from '../domain/reduce'
 import { computeStreak } from '../domain/streaks'
 import { tramaStats } from '../domain/tramas'
 import { ChapterSheet } from '../ui/ChapterSheet'
+import { GrowthChart } from '../ui/GrowthChart'
 import { HabitDetail } from '../ui/HabitDetail'
 import { LineChart } from '../ui/LineChart'
 import { Sheet } from '../ui/Sheet'
@@ -54,6 +56,7 @@ export function Progreso() {
       active: activeDays(votes),
       tramas: tramaStats(data.tramas, data.habits, votes),
       chapters: buildChapters(data, today, 8),
+      growth: growthSeries(data, today),
     }
   }, [data, today])
 
@@ -88,6 +91,24 @@ export function Progreso() {
             <div className="on-bg"><b>{m.active}</b><span>{m.active === 1 ? 'día' : 'días'} con al menos un voto</span></div>
             <div className="on-bg"><b>{m.top?.best ?? 0}</b><span>{m.top && m.top.best > 0 ? `días, tu mejor racha: ${m.top.habit.name}` : 'días de mejor racha'}</span></div>
           </div>
+
+          {m.growth.length > 0 && (() => {
+            const now = m.growth[m.growth.length - 1]
+            const year = yearProjection(m.growth, today)
+            return (
+              <section className="panel" aria-labelledby="c-uno">
+                <div className="panel-h"><h2 id="c-uno">Tu 1% diario</h2><span className="mono">{formatPct(now.value)} desde el día 1</span></div>
+                <div className="grow-n">{formatTimes(now.value)}</div>
+                <p className="grow-s">
+                  {year === null
+                    ? 'Con una semana de días cerrados te muestro hacia dónde vas.'
+                    : <>A tu ritmo del último mes, en un año serías <b>{formatTimes(year)}</b> quien eres hoy.</>}
+                </p>
+                <GrowthChart series={m.growth} today={today} />
+                <p className="help">Cada día suma hasta 1% según lo que cumpliste, y un día en blanco resta 1%. Los días se multiplican: 1% diario durante un año es ×37,8.</p>
+              </section>
+            )
+          })()}
 
           <section className="panel" aria-labelledby="c-acum">
             <div className="panel-h">
