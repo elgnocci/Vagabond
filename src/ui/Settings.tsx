@@ -1,9 +1,11 @@
 import { useMemo, useRef, useState } from 'react'
 import { motion } from 'motion/react'
-import { exportAll, importAll, saveReminders } from '../db/db'
-import type { useData } from '../db/hooks'
+import { exportAll, importAll, savePauses, saveReminders } from '../db/db'
+import type { Data } from '../db/hooks'
+import { clockNow, getDayEnd, setDayEnd } from '../day'
 import { buildBackup, describeBackup, parseBackup, type Backup } from '../domain/backup'
 import { formatDay, toISO, type ISODate } from '../domain/dates'
+import { isPaused, togglePause } from '../domain/pauses'
 import { planReminders } from '../domain/reminders'
 import type { ReminderSettings } from '../domain/types'
 import { canNotify, ensurePermission, saveFile } from '../notify'
@@ -20,7 +22,7 @@ function Switch({ on, label, onChange }: { on: boolean; label: string; onChange:
 }
 
 interface Props {
-  data: NonNullable<ReturnType<typeof useData>>
+  data: Data
   today: ISODate
   onError: (msg: string) => void
 }
@@ -29,6 +31,10 @@ export function Settings({ data, today, onError }: Props) {
   const [theme, setThemeState] = useState(getTheme)
   const [pending, setPending] = useState<Backup | null>(null)
   const [note, setNote] = useState<string | null>(null)
+  const [dayEnd, setDayEndState] = useState(getDayEnd)
+  const [upd, setUpdate] = useState<'idle' | 'checking' | 'none' | 'error' | { url: string }>('idle')
+  const paused = isPaused(data.pauses, today)
+  const backupDays = data.lastBackupAt ? Math.floor((Date.now() - data.lastBackupAt) / 86_400_000) : null
   const file = useRef<HTMLInputElement>(null)
   const r = data.reminders
 
@@ -44,12 +50,26 @@ export function Settings({ data, today, onError }: Props) {
     await update({ enabled: v })
   }
 
-  const upcoming = useMemo(() => {
-    const now = new Date()
-    const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-    return planReminders(data.habits, data.tramas, data.logs, r, today, hhmm, 2).slice(0, 3)
-  }, [data.habits, data.tramas, data.logs, r, today])
-  const withTime = data.habits.filter((h) => h.remindAt && h.kind !== 'reduce' && h.rhythm.kind === 'days').length
+  const upcoming = useMemo(
+    () => planReminders(data.habits, data.tramas, data.logs, r, today, clockNow(), 2, data.pauses).filter((x) => x.kind !== 'comeback').slice(0, 3),
+    [data.habits, data.tramas, data.logs, data.pauses, r, today],
+  )
+  const withTime = data.habits.filter((h) => h.kind !== 'reduce' && (h.remindAt || h.slots?.some((x) => x.remindAt))).length
+
+  /** Mira en GitHub si hay un APK más nuevo que el instalado. Solo se consulta al tocar el botón. */
+  async function checkUpdate() {
+    setUpdate('checking')
+    try {
+      const res = await fetch('https://api.github.com/repos/elgnocci/Vagabond/releases/tags/android')
+      if (!res.ok) return setUpdate(res.status === 404 ? 'none' : 'error')
+      const rel = (await res.json()) as { html_url: string; assets: { updated_at: string }[] }
+      const newest = Math.max(0, ...rel.assets.map((a) => Date.parse(a.updated_at)))
+      // Media hora de margen: el APK se publica unos minutos después de compilarse.
+      setUpdate(newest > __BUILD_TIME__ + 30 * 60_000 ? { url: rel.html_url } : 'none')
+    } catch {
+      setUpdate('error')
+    }
+  }
 
   async function exportBackup() {
     try {
@@ -97,6 +117,29 @@ export function Settings({ data, today, onError }: Props) {
       </div>
 
       <div className="field">
+        <span className="lbl" id="l-dia">El día termina a las</span>
+        <div className="segm" role="group" aria-labelledby="l-dia">
+          {[0, 1, 2, 3, 4].map((h) => (
+            <button key={h} type="button" aria-pressed={dayEnd === h} onClick={() => { setDayEnd(h); setDayEndState(h); window.dispatchEvent(new Event('vagabond-day-end')) }}>
+              {dayEnd === h && <motion.i layoutId="diafin" className="thumb" transition={{ type: 'spring', stiffness: 500, damping: 36 }} />}
+              <span>{h}:00</span>
+            </button>
+          ))}
+        </div>
+        <p className="help">{dayEnd === 0 ? 'El día cambia a medianoche.' : `Lo que marques antes de las ${dayEnd}:00 cuenta para el día anterior.`}</p>
+      </div>
+
+      <div className="field">
+        <span className="lbl">Pausa</span>
+        <div className="rows">
+          <div className="srow">
+            <span><b>Estoy en pausa</b><small>Enfermedad o viaje: esos días no cuentan a favor ni en contra, y no hay avisos.</small></span>
+            <Switch on={paused} label="Pausa" onChange={() => void savePauses(togglePause(data.pauses, today)).catch(() => onError('No se pudo guardar. Inténtalo de nuevo.'))} />
+          </div>
+        </div>
+      </div>
+
+      <div className="field">
         <span className="lbl">Recordatorios</span>
         <div className="rows">
           <div className="srow">
@@ -140,7 +183,9 @@ export function Settings({ data, today, onError }: Props) {
 
       <div className="field">
         <span className="lbl">Respaldo</span>
-        <p className="help" style={{ marginTop: 0, marginBottom: 8 }}>Tus datos viven solo en este teléfono. Exporta un respaldo de vez en cuando.</p>
+        <p className={backupDays === null || backupDays > 30 ? 'help warn' : 'help'} style={{ marginTop: 0, marginBottom: 8 }}>
+          Tus datos viven solo en este teléfono. {backupDays === null ? 'Todavía no has hecho ningún respaldo.' : backupDays === 0 ? 'Último respaldo: hoy.' : `Último respaldo: hace ${backupDays} ${backupDays === 1 ? 'día' : 'días'}.`}
+        </p>
         {pending ? (
           <div className="confirm" role="alertdialog" aria-label="Confirmar restauración">
             <b>¿Reemplazar todo lo que hay en este teléfono?</b>
@@ -158,6 +203,19 @@ export function Settings({ data, today, onError }: Props) {
         )}
         <input ref={file} type="file" accept="application/json,.json" hidden onChange={(e) => void pick(e)} />
         {note && <p className="help" role="status">{note}</p>}
+      </div>
+
+      <div className="field">
+        <span className="lbl">Versión</span>
+        {typeof upd === 'object' ? (
+          <a className="btn block" href={upd.url} target="_blank" rel="noreferrer">Hay una versión nueva · Descargar</a>
+        ) : (
+          <button type="button" className="btn quiet block" disabled={upd === 'checking'} onClick={() => void checkUpdate()}>
+            {upd === 'checking' ? 'Buscando…' : 'Buscar versión nueva'}
+          </button>
+        )}
+        {upd === 'none' && <p className="help" role="status">Tienes la última versión publicada.</p>}
+        {upd === 'error' && <p className="help warn" role="status">No se pudo consultar. Revisa tu conexión.</p>}
       </div>
 
       <p className="mono" style={{ textAlign: 'center', marginTop: 28 }}>Vagabond · versión {__APP_VERSION__}</p>

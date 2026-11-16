@@ -1,5 +1,7 @@
 import { Capacitor } from '@capacitor/core'
+import { handleBack } from './back'
 import type { Reminder } from './domain/reminders'
+import type { Moment } from './domain/types'
 
 /** Los avisos con la app cerrada solo existen dentro de la app Android. */
 export const canNotify = Capacitor.isNativePlatform()
@@ -29,7 +31,29 @@ export async function syncReminders(reminders: Reminder[]): Promise<void> {
       body: r.body,
       // Hora local del teléfono. `allowWhileIdle` deja que suene con el teléfono en reposo.
       schedule: { at: new Date(`${r.date}T${r.time}:00`), allowWhileIdle: true },
+      // Los avisos de un hábito traen el botón "Hecho".
+      ...(r.habitId ? { actionTypeId: 'HABIT', extra: { habitId: r.habitId, slot: r.slot, date: r.date } } : {}),
     })),
+  })
+}
+
+interface NativeHandlers {
+  /** Se tocó "Hecho" en el aviso de un hábito. */
+  onDone: (habitId: string, date: string, slot?: Moment) => void
+}
+
+/** Lo que solo existe en la app Android: el botón "Hecho" de los avisos y el botón atrás del teléfono. */
+export async function initNative({ onDone }: NativeHandlers): Promise<void> {
+  if (!canNotify) return
+  const [ln, { App }] = await Promise.all([plugin(), import('@capacitor/app')])
+  await ln.registerActionTypes({ types: [{ id: 'HABIT', actions: [{ id: 'done', title: 'Hecho' }] }] })
+  await ln.addListener('localNotificationActionPerformed', (event) => {
+    const extra = event.notification.extra as { habitId?: string; date?: string; slot?: Moment } | undefined
+    if (event.actionId === 'done' && extra?.habitId && extra.date) onDone(extra.habitId, extra.date, extra.slot)
+  })
+  // Atrás cierra lo último abierto; si no hay nada, deja la app en segundo plano en vez de cerrarla.
+  await App.addListener('backButton', () => {
+    if (!handleBack()) void App.minimizeApp()
   })
 }
 

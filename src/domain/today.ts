@@ -1,14 +1,38 @@
 import { addDays, diffDays, startOfWeek, weekdayMon, type ISODate } from './dates'
-import { computeStreak, type StreakInfo } from './streaks'
+import { isPaused } from './pauses'
 import { collectVotes, reduceState, type ReduceState } from './reduce'
-import type { Habit, Log, Moment, Trama, Urge, Use } from './types'
+import { computeStreak, rhythmStart, type StreakInfo } from './streaks'
+import type { Closure, Habit, Log, Moment, Pause, Slot, Trama, Urge, Use } from './types'
 
 export type DotState = 'done' | 'missed' | 'off' | 'pending'
 export type SectionId = Moment | 'week' | 'month'
 
+/** Los momentos de un hábito: los de `slots` si tiene varios, o el único de `moment`. */
+export function slotsOf(habit: Habit): Slot[] {
+  return habit.slots && habit.slots.length > 1
+    ? habit.slots
+    : [{ moment: habit.slots?.[0]?.moment ?? habit.moment, cue: habit.slots?.[0]?.cue ?? habit.cue, remindAt: habit.slots?.[0]?.remindAt ?? habit.remindAt }]
+}
+
+export const isMulti = (habit: Habit) => !!habit.slots && habit.slots.length > 1
+
+/** Momentos ya hechos en un registro. Un hábito de una vez al día tiene hecho su único momento. */
+export function doneSlots(habit: Habit, log: Log | undefined): Moment[] {
+  if (!log) return []
+  return isMulti(habit) ? log.slots ?? [] : [slotsOf(habit)[0].moment]
+}
+
 export interface TodayItem {
+  /** Único por tarjeta: el hábito, más el momento si tiene varios al día. */
+  key: string
   habit: Habit
   trama?: Trama
+  /** El momento de esta tarjeta, solo en hábitos de varias veces al día. */
+  slot?: Moment
+  /** Señal de esta tarjeta ("después de…"). */
+  cue?: string
+  /** En hábitos de varias veces al día: cuántas van hoy y cuántas son. */
+  multi?: { done: number; total: number }
   doneToday: boolean
   /** Hoy se marcó la versión de 2 minutos. */
   minToday: boolean
@@ -37,7 +61,7 @@ export interface TodayView {
   sections: TodaySection[]
   /** Lo que se está dejando (tabaco). No entra en el avance del día. */
   reduce: ReduceItem[]
-  /** Avance del día: hábitos de días fijos que tocan hoy, más los de meta marcados hoy. */
+  /** Avance del día: cada momento que toca hoy, más los hábitos de meta marcados hoy. */
   done: number
   total: number
   allDone: boolean
@@ -45,64 +69,96 @@ export interface TodayView {
   /** Día 1 = el día en que se creó el primer hábito. */
   dayNumber: number | null
   hasHabits: boolean
+  /** Hoy está en pausa: no se exige nada. */
+  paused: boolean
+}
+
+export interface TodayExtra {
+  closures?: Closure[]
+  pauses?: Pause[]
 }
 
 const ORDER: SectionId[] = ['morning', 'afternoon', 'night', 'week', 'month']
 
+export const habitOrder = (a: Habit, b: Habit) => (a.order ?? a.createdAt) - (b.order ?? b.createdAt)
+
 export function buildToday(
   habits: Habit[], tramas: Trama[], logs: Log[], today: ISODate, uses: Use[] = [], urges: Urge[] = [],
+  { closures = [], pauses = [] }: TodayExtra = {},
 ): TodayView {
   const tramaById = new Map(tramas.map((t) => [t.id, t]))
   const habitById = new Map(habits.map((h) => [h.id, h]))
   const doneByHabit = new Map<string, Set<ISODate>>()
-  const minToday = new Set<string>()
+  const todayLog = new Map<string, Log>()
   for (const l of logs) {
     let set = doneByHabit.get(l.habitId)
     if (!set) doneByHabit.set(l.habitId, (set = new Set()))
     set.add(l.date)
-    if (l.date === today && l.state === 'min') minToday.add(l.habitId)
+    if (l.date === today) todayLog.set(l.habitId, l)
   }
 
-  const active = habits.filter((h) => !h.archived).sort((a, b) => a.createdAt - b.createdAt)
+  const paused = isPaused(pauses, today)
+  const active = habits.filter((h) => !h.archived).sort(habitOrder)
   const buckets = new Map<SectionId, TodayItem[]>()
+  const reduce: ReduceItem[] = []
   let done = 0
   let total = 0
-
-  const reduce: ReduceItem[] = []
+  const push = (section: SectionId, item: TodayItem) => {
+    const list = buckets.get(section)
+    if (list) list.push(item)
+    else buckets.set(section, [item])
+  }
 
   for (const habit of active) {
+    const trama = tramaById.get(habit.tramaId)
     if (habit.kind === 'reduce') {
-      reduce.push({ habit, trama: tramaById.get(habit.tramaId), state: reduceState(habit, uses, urges, today) })
+      reduce.push({ habit, trama, state: reduceState(habit, uses, urges, today, closures, pauses) })
       continue
     }
     const dates = doneByHabit.get(habit.id) ?? new Set<ISODate>()
-    const doneToday = dates.has(today)
-    const item: TodayItem = {
+    const log = todayLog.get(habit.id)
+    const base = {
       habit,
-      trama: tramaById.get(habit.tramaId),
-      doneToday,
-      minToday: minToday.has(habit.id),
+      trama,
       linked: false,
       anchorName: habit.anchorId ? habitById.get(habit.anchorId)?.name : undefined,
-      streak: computeStreak(habit, dates, today),
-      dots: weekDots(habit, dates, today),
+      streak: computeStreak(habit, dates, today, pauses),
+      dots: weekDots(habit, dates, today, pauses),
     }
-    let section: SectionId
-    if (habit.rhythm.kind === 'days') {
-      if (!habit.rhythm.days.includes(weekdayMon(today))) continue
-      section = habit.moment
-      total++
-      if (doneToday) done++
-    } else {
-      section = habit.rhythm.period
+
+    if (habit.rhythm.kind === 'quota') {
+      const doneToday = !!log
+      // En pausa, lo que tiene meta semanal o mensual solo aparece si ya se marcó hoy.
+      if (paused && !doneToday) continue
       if (doneToday) {
         total++
         done++
       }
+      push(habit.rhythm.period, { ...base, key: habit.id, cue: habit.cue, doneToday, minToday: log?.state === 'min' })
+      continue
     }
-    const list = buckets.get(section)
-    if (list) list.push(item)
-    else buckets.set(section, [item])
+
+    const scheduled = habit.rhythm.days.includes(weekdayMon(today)) && today >= rhythmStart(habit)
+    if (!scheduled || (paused && !log)) continue
+    const slots = slotsOf(habit)
+    const made = doneSlots(habit, log)
+    const multi = slots.length > 1 ? { done: made.length, total: slots.length } : undefined
+    for (const slot of slots) {
+      const doneToday = made.includes(slot.moment)
+      total++
+      if (doneToday) done++
+      push(slot.moment, {
+        ...base,
+        key: multi ? `${habit.id}:${slot.moment}` : habit.id,
+        slot: multi ? slot.moment : undefined,
+        cue: slot.cue,
+        multi,
+        doneToday,
+        minToday: doneToday && log?.state === 'min',
+        // El aviso de "ayer faltaste" va solo en el primer momento pendiente, para no repetirlo.
+        streak: multi && made.length > 0 ? { ...base.streak, atRisk: false } : base.streak,
+      })
+    }
   }
 
   const sections = ORDER.filter((id) => buckets.has(id)).map((id) => {
@@ -124,41 +180,45 @@ export function buildToday(
     done,
     total,
     allDone: total > 0 && done === total,
-    totalVotes: collectVotes(habits, logs, uses, urges, today).length,
+    totalVotes: collectVotes(habits, logs, uses, urges, today, closures, pauses).length,
     dayNumber: first ? diffDays(first, today) + 1 : null,
     hasHabits: active.length > 0,
+    paused,
   }
 }
 
 /** Pone cada hábito apilado justo después de su ancla, si el ancla también toca hoy en esta sección. */
 function stackOrder(items: TodayItem[]): TodayItem[] {
-  const ids = new Set(items.map((i) => i.habit.id))
+  const firstOf = new Map<string, string>() // hábito → clave de su primera tarjeta en la sección
+  for (const i of items) if (!firstOf.has(i.habit.id)) firstOf.set(i.habit.id, i.key)
   const children = new Map<string, TodayItem[]>()
   const roots: TodayItem[] = []
   for (const item of items) {
     const a = item.habit.anchorId
-    if (a && a !== item.habit.id && ids.has(a)) children.set(a, [...(children.get(a) ?? []), item])
+    const anchorKey = a && a !== item.habit.id ? firstOf.get(a) : undefined
+    if (anchorKey) children.set(anchorKey, [...(children.get(anchorKey) ?? []), item])
     else roots.push(item)
   }
   const out: TodayItem[] = []
   const seen = new Set<string>()
   const visit = (item: TodayItem, linked: boolean) => {
-    if (seen.has(item.habit.id)) return
-    seen.add(item.habit.id)
+    if (seen.has(item.key)) return
+    seen.add(item.key)
     out.push(linked ? { ...item, linked: true } : item)
-    for (const child of children.get(item.habit.id) ?? []) visit(child, true)
+    for (const child of children.get(item.key) ?? []) visit(child, true)
   }
   roots.forEach((r) => visit(r, false))
   items.forEach((i) => visit(i, false)) // por si hubiera un ciclo en los datos
   return out
 }
 
-function weekDots(habit: Habit, dates: ReadonlySet<ISODate>, today: ISODate): DotState[] {
+function weekDots(habit: Habit, dates: ReadonlySet<ISODate>, today: ISODate, pauses: readonly Pause[]): DotState[] {
   const out: DotState[] = []
+  const start = rhythmStart(habit)
   for (let i = 6; i >= 0; i--) {
     const d = addDays(today, -i)
     if (dates.has(d)) out.push('done')
-    else if (d < habit.createdOn) out.push('off')
+    else if (d < habit.createdOn || d < start || isPaused(pauses, d)) out.push('off')
     else if (habit.rhythm.kind === 'quota') out.push(d === today ? 'pending' : 'off')
     else if (!habit.rhythm.days.includes(weekdayMon(d))) out.push('off')
     else out.push(d === today ? 'pending' : 'missed')
@@ -190,4 +250,9 @@ export function voteGrid(votes: { date: ISODate }[], today: ISODate, weeks = 5):
       future: date > today,
     }
   })
+}
+
+/** El momento del día según la hora del reloj. */
+export function momentAt(hour: number): Moment {
+  return hour < 12 ? 'morning' : hour < 19 ? 'afternoon' : 'night'
 }

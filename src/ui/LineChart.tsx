@@ -65,7 +65,7 @@ export function LineChart({ points }: { points: SeriesPoint[] }) {
         {at && <line className="cross" x1={x(hover!)} x2={x(hover!)} y1={PAD.t - 8} y2={y(lo)} />}
         <circle className="dot" cx={x(hover ?? n - 1)} cy={y((at ?? points[n - 1]).total)} r="5" />
         {!at && <text className="end" x={x(n - 1)} y={y(last) - 11} textAnchor="end">{last}</text>}
-        <rect x={PAD.l - 10} y={0} width={w - PAD.l - PAD.r + 20} height={H} fill="transparent" style={{ touchAction: 'pan-y' }}
+        <rect x={PAD.l - 10} y={0} width={Math.max(0, w - PAD.l - PAD.r + 20)} height={H} fill="transparent" style={{ touchAction: 'pan-y' }}
           onPointerDown={pick} onPointerMove={pick} onPointerLeave={() => setHover(null)} onPointerCancel={() => setHover(null)} />
       </svg>
       {at && (

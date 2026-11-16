@@ -1,9 +1,13 @@
 import Dexie, { type EntityTable, type Table } from 'dexie'
-import { toISO, type ISODate } from '../domain/dates'
+import { todayISO } from '../day'
+import type { ISODate } from '../domain/dates'
 import type { Backup, BackupData } from '../domain/backup'
-import { collectVotes } from '../domain/reduce'
+import { collectVotes, freezeDays, limitOn } from '../domain/reduce'
+import { computeStreak } from '../domain/streaks'
+import { habitOrder, isMulti } from '../domain/today'
 import {
-  TRAMA_COLORS, type Habit, type Log, type Meta, type Moment, type ReducePlan, type ReminderSettings, type Rhythm, type Trama, type Todo, type TramaColor, type Urge, type Use,
+  TRAMA_COLORS, type Closure, type Habit, type Log, type Meta, type Moment, type Pause, type ReducePlan, type ReminderSettings, type Rhythm,
+  type Slot, type Trama, type Todo, type TramaColor, type Urge, type Use,
 } from '../domain/types'
 
 class VagabondDB extends Dexie {
@@ -14,6 +18,7 @@ class VagabondDB extends Dexie {
   urges!: EntityTable<Urge, 'id'>
   todos!: EntityTable<Todo, 'id'>
   meta!: EntityTable<Meta, 'key'>
+  closures!: Table<Closure, [string, ISODate]>
 
   constructor() {
     super('vagabond')
@@ -28,6 +33,7 @@ class VagabondDB extends Dexie {
     })
     this.version(3).stores({ todos: 'id' })
     this.version(4).stores({ meta: 'key' })
+    this.version(5).stores({ closures: '[habitId+date], habitId' })
   }
 }
 
@@ -50,6 +56,11 @@ export interface HabitDraft {
   urgePlan: string
   /** "HH:MM" o vacío. */
   remindAt: string
+  /** Segunda trama, o null. */
+  tramaId2: string | null
+  /** Momentos del día. Con dos o más, el hábito se hace varias veces al día. */
+  slots: Slot[]
+  reward: string
 }
 
 export interface TramaDraft {
@@ -71,21 +82,28 @@ async function nextColor(): Promise<{ color: TramaColor; order: number }> {
 
 /** Campos del hábito que salen del asistente. Si hay ancla, hereda su momento del día. */
 async function habitFields(draft: HabitDraft, tramaId: string) {
+  const tramaId2 = draft.tramaId2 && draft.tramaId2 !== tramaId ? draft.tramaId2 : undefined
   if (draft.kind === 'reduce') {
     return {
-      tramaId, name: draft.name.trim(), kind: 'reduce' as const, urgePlan: clean(draft.urgePlan),
+      tramaId, tramaId2, name: draft.name.trim(), kind: 'reduce' as const, urgePlan: clean(draft.urgePlan),
       ...(draft.plan ? { plan: draft.plan } : {}),
     }
   }
-  const anchor = draft.anchorId ? await db.habits.get(draft.anchorId) : undefined
+  const days = draft.rhythm.kind === 'days'
+  const slots = days ? draft.slots.map((s) => ({ moment: s.moment, cue: clean(s.cue ?? ''), remindAt: clean(s.remindAt ?? '') })) : []
+  const multi = slots.length > 1
+  const anchor = !multi && draft.anchorId ? await db.habits.get(draft.anchorId) : undefined
   return {
     tramaId,
+    tramaId2,
     name: draft.name.trim(),
-    moment: anchor?.moment ?? draft.moment,
+    moment: anchor?.moment ?? slots[0]?.moment ?? draft.moment,
     rhythm: draft.rhythm,
     minVersion: clean(draft.minVersion),
-    remindAt: draft.rhythm.kind === 'days' ? clean(draft.remindAt) : undefined,
-    cue: anchor ? undefined : clean(draft.cue),
+    reward: clean(draft.reward),
+    slots: multi ? slots : undefined,
+    cue: multi || anchor ? undefined : clean(slots[0]?.cue ?? draft.cue),
+    remindAt: multi ? undefined : clean(slots[0]?.remindAt ?? draft.remindAt),
     anchorId: anchor?.id,
   }
 }
@@ -108,7 +126,7 @@ export function createHabit(draft: HabitDraft) {
       moment: 'morning',
       rhythm: { kind: 'days', days: [0, 1, 2, 3, 4, 5, 6] },
       ...(await habitFields(draft, tramaId)),
-      createdOn: toISO(new Date()),
+      createdOn: todayISO(),
       createdAt: Date.now(),
       archived: false,
     })
@@ -116,19 +134,41 @@ export function createHabit(draft: HabitDraft) {
 }
 
 export function updateHabit(id: string, draft: HabitDraft) {
-  return db.transaction('rw', db.tramas, db.habits, async () => {
+  return db.transaction('rw', [db.tramas, db.habits, db.logs, db.uses, db.urges, db.closures], async () => {
+    const old = await db.habits.get(id)
+    if (!old) return
+    const today = todayISO()
     const tramaId = await resolveTrama(draft)
     const fields = await habitFields(draft, tramaId)
-    await db.habits.update(id, fields)
+    const extra: Partial<Habit> = {}
+
+    if (old.kind === 'reduce') {
+      // Antes de cambiar el plan, los días ya pasados quedan fijos con el tope que tenían.
+      if (draft.plan) {
+        const [uses, urges, closures] = await Promise.all([
+          db.uses.where('habitId').equals(id).toArray(), db.urges.where('habitId').equals(id).toArray(), db.closures.where('habitId').equals(id).toArray(),
+        ])
+        await db.closures.bulkPut(freezeDays(old, uses, urges, closures, today))
+      }
+    } else if ('rhythm' in fields && JSON.stringify(fields.rhythm) !== JSON.stringify(old.rhythm)) {
+      // El ritmo nuevo rige desde hoy. La racha que traía se conserva si la unidad es la misma.
+      const done = new Set((await db.logs.where('habitId').equals(id).toArray()).map((l) => l.date))
+      const before = computeStreak(old, done, today)
+      const unit = (r: Rhythm) => (r.kind === 'days' ? 'days' : r.period)
+      extra.rhythmSince = today
+      extra.streakCarry = unit(old.rhythm) === unit(fields.rhythm as Rhythm) ? before.current - (done.has(today) ? 1 : 0) : 0
+    }
+
+    await db.habits.update(id, { ...fields, ...extra })
     // Los hábitos apilados sobre este lo siguen si cambió de momento.
-    const followers = await db.habits.filter((h) => h.anchorId === id).toArray()
-    if ('moment' in fields) for (const f of followers) await db.habits.update(f.id, { moment: fields.moment })
+    if ('moment' in fields) await db.habits.filter((h) => h.anchorId === id).modify({ moment: fields.moment })
   })
 }
 
 /** Borra el hábito y sus votos. Los hábitos apilados sobre él quedan sueltos. */
 export function deleteHabit(id: string) {
-  return db.transaction('rw', db.habits, db.logs, db.uses, db.urges, async () => {
+  return db.transaction('rw', [db.habits, db.logs, db.uses, db.urges, db.closures], async () => {
+    await db.closures.where('habitId').equals(id).delete()
     await db.logs.where('habitId').equals(id).delete()
     await db.uses.where('habitId').equals(id).delete()
     await db.urges.where('habitId').equals(id).delete()
@@ -148,30 +188,101 @@ export function updateTrama(id: string, draft: TramaDraft) {
   return db.tramas.update(id, { name: draft.name.trim(), identity: clean(draft.identity), color: draft.color })
 }
 
+/** Archivar saca el hábito de Hoy pero conserva sus votos. */
+export function archiveHabit(id: string, archived: boolean) {
+  return db.habits.update(id, { archived })
+}
+
+/** Intercambia la posición de dos hábitos en la lista. */
+export function swapHabits(a: string, b: string) {
+  return db.transaction('rw', db.habits, async () => {
+    const all = (await db.habits.toArray()).sort(habitOrder)
+    const ia = all.findIndex((h) => h.id === a)
+    const ib = all.findIndex((h) => h.id === b)
+    if (ia < 0 || ib < 0) return
+    ;[all[ia], all[ib]] = [all[ib], all[ia]]
+    await Promise.all(all.map((h, order) => (h.order === order ? null : db.habits.update(h.id, { order }))))
+  })
+}
+
 /** Solo se puede borrar una trama sin hábitos. Devuelve false si todavía tiene. */
 export function deleteTrama(id: string): Promise<boolean> {
   return db.transaction('rw', db.tramas, db.habits, async () => {
     if (await db.habits.where('tramaId').equals(id).count()) return false
+    await db.habits.filter((h) => h.tramaId2 === id).modify({ tramaId2: undefined })
     await db.tramas.delete(id)
     return true
   })
 }
 
-/** Marca hoy con la versión de 2 minutos. */
-export function logMin(habitId: string, date: ISODate) {
-  return db.logs.put({ habitId, date, state: 'min', at: Date.now() })
+/** Marca con la versión de 2 minutos. En hábitos de varias veces al día, marca ese momento. */
+export function logMin(habit: Habit, date: ISODate, slot?: Moment) {
+  return db.transaction('rw', db.logs, async () => {
+    const old = await db.logs.get([habit.id, date])
+    const slots = isMulti(habit) && slot ? [...new Set([...(old?.slots ?? []), slot])] : undefined
+    await db.logs.put({ habitId: habit.id, date, state: 'min', at: Date.now(), slots })
+  })
 }
 
-/** Marca o desmarca un día. Devuelve true si quedó marcado. */
-export function toggleLog(habitId: string, date: ISODate): Promise<boolean> {
+/**
+ * Marca o desmarca un día; en hábitos de varias veces al día, ese momento.
+ * Devuelve true si quedó marcado.
+ */
+export function toggleLog(habit: Habit, date: ISODate, slot?: Moment): Promise<boolean> {
   return db.transaction('rw', db.logs, async () => {
-    const key: [string, ISODate] = [habitId, date]
-    if (await db.logs.get(key)) {
+    const key: [string, ISODate] = [habit.id, date]
+    const old = await db.logs.get(key)
+    if (isMulti(habit) && slot) {
+      const had = old?.slots ?? []
+      const slots = had.includes(slot) ? had.filter((m) => m !== slot) : [...had, slot]
+      if (slots.length === 0) await db.logs.delete(key)
+      else await db.logs.put({ habitId: habit.id, date, state: old?.state === 'min' && had.includes(slot) ? 'full' : old?.state ?? 'full', at: Date.now(), slots })
+      return slots.includes(slot)
+    }
+    if (old) {
       await db.logs.delete(key)
       return false
     }
-    await db.logs.put({ habitId, date, state: 'full', at: Date.now() })
+    // Desde el calendario, un hábito de varias veces al día se marca completo.
+    const slots = isMulti(habit) ? habit.slots!.map((s) => s.moment) : undefined
+    await db.logs.put({ habitId: habit.id, date, state: 'full', at: Date.now(), slots })
     return true
+  })
+}
+
+/** Marca como hecho sin desmarcar si ya lo estaba. Se usa desde el botón "Hecho" de un aviso. */
+export function markDone(habitId: string, date: ISODate, slot?: Moment) {
+  return db.transaction('rw', db.habits, db.logs, async () => {
+    const habit = await db.habits.get(habitId)
+    if (!habit) return
+    const old = await db.logs.get([habitId, date])
+    if (isMulti(habit) && slot) {
+      if (old?.slots?.includes(slot)) return
+      await db.logs.put({ habitId, date, state: old?.state ?? 'full', at: Date.now(), slots: [...(old?.slots ?? []), slot] })
+    } else if (!old) {
+      await db.logs.put({ habitId, date, state: 'full', at: Date.now(), slots: isMulti(habit) ? [habit.slots![0].moment] : undefined })
+    }
+  })
+}
+
+/** Confirma cómo terminó un día sin registros de algo que se está dejando. */
+export async function confirmDay(habit: Habit, date: ISODate, ok: boolean) {
+  await db.closures.put({ habitId: habit.id, date, limit: habit.plan ? limitOn(habit.plan, date) : 0, ok })
+}
+
+export function unconfirmDay(habitId: string, date: ISODate) {
+  return db.closures.delete([habitId, date])
+}
+
+/** Corrige cuántos fueron en un día pasado y deja ese día cerrado. */
+export function setDayUses(habit: Habit, date: ISODate, count: number) {
+  return db.transaction('rw', db.uses, db.closures, async () => {
+    const rows = await db.uses.where('habitId').equals(habit.id).filter((u) => u.date === date).toArray()
+    if (rows.length > count) await db.uses.bulkDelete(rows.slice(count).map((u) => u.id!))
+    for (let i = rows.length; i < count; i++) await db.uses.add({ habitId: habit.id, date, at: Date.now() })
+    const old = await db.closures.get([habit.id, date])
+    const limit = old?.limit ?? (habit.plan ? limitOn(habit.plan, date) : 0)
+    await db.closures.put({ habitId: habit.id, date, limit, ok: count <= limit })
   })
 }
 
@@ -193,12 +304,18 @@ export function removeUrge(id: number) {
   return db.urges.delete(id)
 }
 
-/** Votos que lleva la trama de un hábito, leídos directo de la base. */
-export async function tramaVotesOf(habitId: string, today: ISODate): Promise<number> {
-  const [habits, logs, uses, urges] = await Promise.all([db.habits.toArray(), db.logs.toArray(), db.uses.toArray(), db.urges.toArray()])
-  const tramaId = habits.find((h) => h.id === habitId)?.tramaId
-  const ids = new Set(habits.filter((h) => h.tramaId === tramaId).map((h) => h.id))
-  return collectVotes(habits, logs, uses, urges, today).filter((v) => ids.has(v.habitId)).length
+/** Votos que llevan las tramas de un hábito (una o dos), leídos directo de la base. */
+export async function tramaVotesOf(habitId: string, today: ISODate): Promise<{ tramaId: string; votes: number }[]> {
+  const [habits, logs, uses, urges, closures] = await Promise.all([
+    db.habits.toArray(), db.logs.toArray(), db.uses.toArray(), db.urges.toArray(), db.closures.toArray(),
+  ])
+  const habit = habits.find((h) => h.id === habitId)
+  if (!habit) return []
+  const votes = collectVotes(habits, logs, uses, urges, today, closures)
+  return [habit.tramaId, habit.tramaId2].filter((t): t is string => !!t).map((tramaId) => {
+    const ids = new Set(habits.filter((h) => h.tramaId === tramaId || h.tramaId2 === tramaId).map((h) => h.id))
+    return { tramaId, votes: votes.filter((v) => ids.has(v.habitId)).length }
+  })
 }
 
 export interface TodoDraft {
@@ -230,11 +347,16 @@ export function saveReminders(value: ReminderSettings) {
   return db.meta.put({ key: 'reminders', value })
 }
 
-const ALL = () => [db.tramas, db.habits, db.logs, db.uses, db.urges, db.todos, db.meta]
+export function savePauses(value: Pause[]) {
+  return db.meta.put({ key: 'pauses', value })
+}
+
+const ALL = () => [db.tramas, db.habits, db.logs, db.uses, db.urges, db.todos, db.meta, db.closures]
 
 export async function exportAll(): Promise<BackupData> {
-  const [tramas, habits, logs, uses, urges, todos, meta] = await Promise.all(ALL().map((t) => t.toArray()))
-  return { tramas, habits, logs, uses, urges, todos, meta } as BackupData
+  const [tramas, habits, logs, uses, urges, todos, meta, closures] = await Promise.all(ALL().map((t) => t.toArray()))
+  await db.meta.put({ key: 'lastBackupAt', value: Date.now() })
+  return { tramas, habits, logs, uses, urges, todos, meta, closures } as BackupData
 }
 
 /** Reemplaza todo lo que hay en el teléfono por el contenido del respaldo. Todo o nada. */
@@ -250,6 +372,7 @@ export function importAll(backup: Backup) {
     await db.urges.bulkAdd(d.urges.map(({ id: _id, ...u }) => u))
     await db.todos.bulkAdd(d.todos)
     await db.meta.bulkAdd(d.meta)
+    await db.closures.bulkAdd(d.closures)
   })
 }
 

@@ -1,4 +1,4 @@
-import type { Habit, Log, Meta, Todo, Trama, Urge, Use } from './types'
+import type { Closure, Habit, Log, Meta, Todo, Trama, Urge, Use } from './types'
 
 export interface BackupData {
   tramas: Trama[]
@@ -8,6 +8,7 @@ export interface BackupData {
   urges: Urge[]
   todos: Todo[]
   meta: Meta[]
+  closures: Closure[]
 }
 
 export interface Backup {
@@ -17,7 +18,7 @@ export interface Backup {
   data: BackupData
 }
 
-const TABLES: (keyof BackupData)[] = ['tramas', 'habits', 'logs', 'uses', 'urges', 'todos', 'meta']
+const TABLES: (keyof BackupData)[] = ['tramas', 'habits', 'logs', 'uses', 'urges', 'todos', 'meta', 'closures']
 
 export function buildBackup(data: BackupData, now: Date): Backup {
   return { app: 'vagabond', version: 1, exportedAt: now.toISOString(), data }
@@ -49,7 +50,7 @@ export function parseBackup(text: string): { ok: true; backup: Backup } | { ok: 
   const ok =
     out.tramas.every((t) => { const r = t as Record<string, unknown>; return str(r.id) && str(r.name) && str(r.color) }) &&
     out.habits.every((h) => { const r = h as Record<string, unknown>; return str(r.id) && str(r.name) && tramaIds.has(r.tramaId) && isObj(r.rhythm) && str(r.createdOn) }) &&
-    [...out.logs, ...out.uses, ...out.urges].every((l) => { const r = l as Record<string, unknown>; return habitIds.has(r.habitId) && str(r.date) }) &&
+    [...out.logs, ...out.uses, ...out.urges, ...out.closures].every((l) => { const r = l as Record<string, unknown>; return habitIds.has(r.habitId) && str(r.date) }) &&
     out.todos.every((t) => { const r = t as Record<string, unknown>; return str(r.id) && str(r.title) }) &&
     out.meta.every((m) => str((m as Record<string, unknown>).key))
   if (!ok) return { ok: false, error: 'El respaldo está dañado.' }

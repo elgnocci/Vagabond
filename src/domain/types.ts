@@ -34,9 +34,18 @@ export interface Trama {
   createdAt: number
 }
 
+/** Una de las veces del día en que se hace un hábito, con su propia señal y hora de aviso. */
+export interface Slot {
+  moment: Moment
+  cue?: string
+  remindAt?: string
+}
+
 export interface Habit {
   id: string
   tramaId: string
+  /** Segunda trama a la que también suma votos (opcional). */
+  tramaId2?: string
   name: string
   /** 'reduce' = algo que se quiere dejar (tabaco). Si falta, es un hábito a construir. */
   kind?: 'build' | 'reduce'
@@ -51,19 +60,46 @@ export interface Habit {
   cue?: string
   /** Apilamiento: el hábito tras el cual se hace este. */
   anchorId?: string
-  /** Hora del recordatorio, "HH:MM". Solo para hábitos de días fijos. */
+  /** Hora del recordatorio, "HH:MM". */
   remindAt?: string
+  /** Varias veces al día: una entrada por momento. Si falta, el hábito se hace una vez, en `moment`. */
+  slots?: Slot[]
+  /** Recompensa atada al hábito: completa "Y después, me doy…". */
+  reward?: string
+  /** Posición en la lista. Si falta, se ordena por fecha de creación. */
+  order?: number
+  /** Desde cuándo rige el ritmo actual. Los días anteriores no se reinterpretan. */
+  rhythmSince?: ISODate
+  /** Racha que traía el hábito cuando se cambió el ritmo; se suma mientras no se rompa. */
+  streakCarry?: number
   createdOn: ISODate
   createdAt: number
   archived: boolean
 }
 
-/** Un registro = un voto. Como máximo uno por hábito y día. */
+/** El registro de un hábito en un día. Vale un voto, o uno por cada momento hecho si el hábito tiene varios. */
 export interface Log {
   habitId: string
   date: ISODate
   state: 'full' | 'min'
   at: number
+  /** Solo en hábitos de varias veces al día: los momentos hechos. */
+  slots?: Moment[]
+}
+
+/** Cierre de un día de algo que se está dejando: queda fijo aunque después cambie el plan. */
+export interface Closure {
+  habitId: string
+  date: ISODate
+  limit: number
+  ok: boolean
+}
+
+/** Período en pausa (enfermedad, viaje): esos días no cuentan a favor ni en contra. */
+export interface Pause {
+  from: ISODate
+  /** Último día en pausa, incluido. Si falta, la pausa sigue abierta. */
+  to?: ISODate
 }
 
 /** Una vez que se consumió lo que se quiere dejar (un cigarro). */

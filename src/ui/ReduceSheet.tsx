@@ -1,18 +1,19 @@
 import { useState } from 'react'
 import { addDays, formatShort, type ISODate } from '../domain/dates'
 import type { ReduceItem } from '../domain/today'
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+import { plural } from './habitText'
 
 interface Props {
   item: ReduceItem
   today: ISODate
   onEdit: () => void
+  onHistory: () => void
+  onArchive: () => void
   onDelete: () => void
 }
 
 /** Detalle de lo que se está dejando: números, plan por etapas y qué hacer ante el antojo. */
-export function ReduceSheet({ item, today, onEdit, onDelete }: Props) {
+export function ReduceSheet({ item, today, onEdit, onHistory, onArchive, onDelete }: Props) {
   const [confirming, setConfirming] = useState(false)
   const { habit, trama, state: s } = item
   const plan = habit.plan
@@ -28,13 +29,13 @@ export function ReduceSheet({ item, today, onEdit, onDelete }: Props) {
 
       <div className="tiles">
         <div><b>{s.resistedTotal}</b><span>antojos resistidos</span></div>
-        <div><b>{s.okDays.length}</b><span>días dentro del tope</span></div>
+        <div><b>{s.okDays.length}</b><span>{s.cold ? 'días en cero' : 'días dentro del tope'}</span></div>
         <div><b>{s.streak}</b><span>de racha</span></div>
       </div>
 
       {habit.urgePlan && <p className="preview"><small>Cuando venga el antojo</small>Voy a {habit.urgePlan}.</p>}
 
-      {plan && (
+      {plan && !s.cold && (
         <>
           <span className="lbl" style={{ display: 'block', marginTop: 20, fontSize: 13, fontWeight: 700 }}>Tu plan</span>
           <ol className="plan">
@@ -51,11 +52,15 @@ export function ReduceSheet({ item, today, onEdit, onDelete }: Props) {
           </ol>
         </>
       )}
+      {s.cold && <p className="help">Lo dejaste de golpe: el tope es cero desde el {plan ? formatShort(plan.quitDate) : 'primer día'}.</p>}
+      <p className="help">Un día sin registros no cuenta hasta que lo confirmas. Así el número refleja lo que pasó de verdad.</p>
 
       <div className="menu">
+        <button className="row" onClick={onHistory}>Ver historial<small>Calendario para revisar y corregir días pasados.</small></button>
         <button className="row" onClick={onEdit}>Editar plan</button>
+        <button className="row" onClick={onArchive}>Archivar<small>Sale de Hoy, pero conserva sus votos.</small></button>
         <button className="row danger" onClick={() => (confirming ? onDelete() : setConfirming(true))}>
-          {confirming ? 'Sí, eliminar el plan y sus votos' : 'Eliminar'}
+          {confirming ? 'Sí, eliminar el plan y sus votos' : 'Eliminar con sus votos'}
         </button>
       </div>
     </>

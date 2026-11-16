@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { addDays, periodEnd, startOfWeek, weekdayMon } from './dates'
 import { computeStreak } from './streaks'
 import { buildToday, voteGrid } from './today'
-import { dependsOn, milestoneProgress, rhythmText, tramaStats } from './tramas'
+import { dependsOn, layoutConstellation, milestoneProgress, rhythmText, tramaStats } from './tramas'
 import { buildBackup, describeBackup, parseBackup } from './backup'
+import { buildChapter, buildChapters, type ChapterData } from './chapters'
 import { activeDays, bestStreak, cumulativeSeries, habitRate, monthGrid, weekCompare } from './progress'
-import { buildPlan, collectVotes, limitOn, reduceState } from './reduce'
+import { buildPlan, collectVotes, freezeDays, limitOn, reduceState } from './reduce'
 import { planReminders } from './reminders'
 import { dueLabel, groupTodos, todosForToday } from './todos'
 import type { Habit, Log, Rhythm, Todo, Urge, Use } from './types'
@@ -104,9 +105,11 @@ describe('racha de veces por semana', () => {
     expect(s).toMatchObject({ current: 0, missedLast: false, atRisk: false })
   })
   it('avisa cuando quedan justo los días necesarios', () => {
-    const s = computeStreak(habit(twice), new Set(), day(5)) // sábado, faltan 2, quedan sábado y domingo
+    const s = computeStreak(habit(twice), set(0, 1), day(12)) // sábado de la 2ª semana, faltan 2, quedan sábado y domingo
     expect(s.period).toMatchObject({ needed: 2, available: 2, tight: true, outOfReach: false })
     expect(s.atRisk).toBe(true)
+    // En la semana en que se creó el hábito todavía no se exige.
+    expect(computeStreak(habit(twice), new Set(), day(5)).atRisk).toBe(false)
   })
   it('si hoy ya está marcado, hoy no cuenta como día disponible', () => {
     const s = computeStreak(habit(twice), set(6), day(6)) // domingo marcado, falta 1 y no quedan días
@@ -277,20 +280,53 @@ describe('estado del tabaco', () => {
     const s = reduceState(tabaco, use(2, 2), [urge(2), urge(1)], day(2))
     expect(s).toMatchObject({ limit: 3, used: 2, over: false, resistedToday: 1, resistedTotal: 2 })
   })
+  const ok = (...ns: number[]): Use[] => ns.flatMap((n) => use(n)) // un cigarro: día registrado y dentro del tope
+
   it('un día dentro del tope vale; hoy no cuenta hasta que termina', () => {
     const s = reduceState(tabaco, [...use(0, 3), ...use(1, 1), ...use(2, 1)], [], day(2))
     expect(s.okDays).toEqual([MON, day(1)])
     expect(s.streak).toBe(2)
   })
+  it('un día sin registros no es un logro: no vota y cuenta como fallo de la racha', () => {
+    const s = reduceState(tabaco, ok(0, 1), [], day(5)) // días 2, 3 y 4 sin abrir la app
+    expect(s.okDays).toEqual([MON, day(1)])
+    expect(s).toMatchObject({ streak: 0, needsConfirm: true })
+  })
+  it('un día sin registros vale si se confirma, y un antojo resistido también lo registra', () => {
+    const closures = [{ habitId: 'x', date: day(1), limit: 3, ok: true }, { habitId: 'x', date: day(2), limit: 3, ok: false }]
+    const s = reduceState(tabaco, ok(0), [urge(3)], day(4), closures)
+    expect(s.okDays).toEqual([MON, day(1), day(3)])
+    expect(s).toMatchObject({ streak: 3, needsConfirm: false })
+  })
   it('pasarse un día no rompe la racha; dos seguidos sí', () => {
-    const one = reduceState(tabaco, use(2, 4), [], day(4))
+    const one = reduceState(tabaco, [...ok(0, 1, 3), ...use(2, 4)], [], day(4))
     expect(one).toMatchObject({ streak: 3, atRisk: false })
-    const two = reduceState(tabaco, [...use(2, 4), ...use(3, 4)], [], day(5))
+    const two = reduceState(tabaco, [...ok(0, 1, 4), ...use(2, 4), ...use(3, 4)], [], day(5))
     expect(two.streak).toBe(1)
   })
   it('tras pasarse ayer, hoy queda en riesgo; si hoy también, ya no', () => {
-    expect(reduceState(tabaco, use(3, 4), [], day(4))).toMatchObject({ atRisk: true, over: false, streak: 3 })
-    expect(reduceState(tabaco, [...use(3, 4), ...use(4, 4)], [], day(4))).toMatchObject({ atRisk: false, over: true, streak: 0 })
+    expect(reduceState(tabaco, [...ok(0, 1, 2), ...use(3, 4)], [], day(4))).toMatchObject({ atRisk: true, over: false, streak: 3 })
+    expect(reduceState(tabaco, [...ok(0, 1, 2), ...use(3, 4), ...use(4, 4)], [], day(4))).toMatchObject({ atRisk: false, over: true, streak: 0 })
+  })
+  it('un cierre guardado no cambia aunque después cambie el plan', () => {
+    const uses = [...use(0, 3), ...use(1, 3)]
+    const frozen = freezeDays(tabaco, uses, [], [], day(2))
+    expect(frozen).toEqual([{ habitId: 'x', date: MON, limit: 3, ok: true }, { habitId: 'x', date: day(1), limit: 3, ok: true }])
+    const stricter = { ...tabaco, plan: buildPlan(1, 1, day(2)) } // plan nuevo: tope 1
+    expect(reduceState(stricter, uses, [], day(2)).okDays).toEqual([])
+    expect(reduceState(stricter, uses, [], day(2), frozen).okDays).toEqual([MON, day(1)])
+  })
+  it('dejarlo de golpe: tope cero desde el primer día', () => {
+    const cold = { id: 'x', createdOn: MON, plan: buildPlan(5, 0, MON) }
+    expect(cold.plan).toEqual({ stages: [], quitDate: MON })
+    const s = reduceState(cold, [], [urge(0), urge(1)], day(2))
+    expect(s).toMatchObject({ limit: 0, cold: true, quit: true, streak: 2, over: false })
+    expect(reduceState(cold, use(2), [], day(2)).over).toBe(true)
+  })
+  it('los días en pausa sin registros no cuentan ni rompen', () => {
+    const s = reduceState(tabaco, ok(0, 1), [], day(6), [], [{ from: day(2), to: day(5) }])
+    expect(s).toMatchObject({ streak: 2, needsConfirm: false })
+    expect(s.okDays).toEqual([MON, day(1)])
   })
   it('desde la fecha final el tope es cero', () => {
     const s = reduceState(tabaco, use(14), [], day(14))
@@ -304,25 +340,35 @@ describe('votos', () => {
   const tabaco: Habit = { ...base, id: 'x', kind: 'reduce', plan: buildPlan(3, 2, MON) }
   const leer: Habit = { ...base, id: 'l' }
 
+  it('un hábito de varias veces al día suma un voto por cada vez', () => {
+    const logs: Log[] = [{ habitId: 'l', date: MON, state: 'full', at: 0, slots: ['morning', 'night'] }, { habitId: 'l', date: day(1), state: 'full', at: 0 }]
+    expect(collectVotes([leer], logs, [], [], day(2))).toHaveLength(3)
+  })
   it('suman hábitos cumplidos, antojos resistidos y días cerrados dentro del tope', () => {
     const logs: Log[] = [{ habitId: 'l', date: MON, state: 'full', at: 0 }]
     const uses: Use[] = Array.from({ length: 4 }, () => ({ habitId: 'x', date: day(1), at: 0 })) // martes se pasó
     const urges: Urge[] = [{ habitId: 'x', date: day(2), at: 0 }]
-    const votes = collectVotes([tabaco, leer], logs, uses, urges, day(3))
-    // 1 hábito + 1 antojo + lunes y miércoles dentro del tope
+    const closures = [{ habitId: 'x', date: MON, limit: 3, ok: true }] // el lunes se confirmó
+    const votes = collectVotes([tabaco, leer], logs, uses, urges, day(3), closures)
+    // 1 hábito + 1 antojo + lunes (confirmado) y miércoles (registrado) dentro del tope
     expect(votes).toHaveLength(4)
     expect(votes.filter((v) => v.habitId === 'x').map((v) => v.date).sort()).toEqual([MON, day(2), day(2)])
+    // Sin confirmar, el lunes no vota.
+    expect(collectVotes([tabaco, leer], logs, uses, urges, day(3))).toHaveLength(3)
   })
   it('pasarse hoy no quita votos ya ganados', () => {
-    const before = collectVotes([tabaco], [], [], [], day(3)).length
-    const uses: Use[] = Array.from({ length: 9 }, () => ({ habitId: 'x', date: day(3), at: 0 }))
+    const past: Use[] = [0, 1, 2].map((n) => ({ habitId: 'x', date: day(n), at: 0 }))
+    const before = collectVotes([tabaco], [], past, [], day(3)).length
+    expect(before).toBe(3)
+    const uses: Use[] = [...past, ...Array.from({ length: 9 }, () => ({ habitId: 'x', date: day(3), at: 0 }))]
     expect(collectVotes([tabaco], [], uses, [], day(3)).length).toBe(before)
   })
   it('lo que se deja aparece aparte y no entra en el avance del día', () => {
     const v = buildToday([tabaco, leer], [], [], day(1))
     expect(v.reduce.map((r) => r.habit.id)).toEqual(['x'])
     expect(v.sections.flatMap((s) => s.items).map((i) => i.habit.id)).toEqual(['l'])
-    expect(v).toMatchObject({ total: 1, totalVotes: 1, hasHabits: true })
+    expect(v).toMatchObject({ total: 1, totalVotes: 0, hasHabits: true })
+    expect(v.reduce[0].state.needsConfirm).toBe(true)
   })
 })
 
@@ -402,7 +448,9 @@ describe('recordatorios', () => {
   const cama: Habit = { ...base, id: 'c', name: 'Hacer la cama', createdAt: 3 } // sin hora propia
   const on = { enabled: true, rescue: true, rescueAt: '20:30' }
   const log = (habitId: string, n: number): Log => ({ habitId, date: day(n), state: 'full', at: 0 })
-  const plan = (logs: Log[], now: string, settings = on, days = 1) => planReminders([dientes, leer, cama], [trama], logs, settings, day(3), now, days)
+  const noComeback = (rs: ReturnType<typeof planReminders>) => rs.filter((r) => r.kind !== 'comeback')
+  const plan = (logs: Log[], now: string, settings = on, days = 1) =>
+    noComeback(planReminders([dientes, leer, cama], [trama], logs, settings, day(3), now, days))
 
   it('apagados no programan nada', () => {
     expect(plan([], '07:00', { ...on, enabled: false })).toEqual([])
@@ -432,14 +480,43 @@ describe('recordatorios', () => {
   })
   it('para los días siguientes asume todo pendiente y respeta los días programados', () => {
     const lmv: Habit = { ...dientes, rhythm: { kind: 'days', days: [0, 2, 4] } } // hoy es jueves
-    const r = planReminders([lmv], [trama], [], { ...on, rescue: false }, day(3), '23:00', 5)
+    const r = noComeback(planReminders([lmv], [trama], [], { ...on, rescue: false }, day(3), '23:00', 5))
     expect(r.map((x) => x.date)).toEqual([day(4), day(7)])
     expect(new Set(r.map((x) => x.id)).size).toBe(2)
   })
-  it('lo que se está dejando y los hábitos de meta no generan avisos', () => {
+  it('lo que se está dejando no genera avisos', () => {
     const tabaco: Habit = { ...base, id: 'x', name: 'Tabaco', createdAt: 9, kind: 'reduce', remindAt: '10:00' }
-    const boxeo: Habit = { ...base, id: 'b', name: 'Boxeo', createdAt: 8, rhythm: { kind: 'quota', period: 'week', times: 2 }, remindAt: '10:00' }
-    expect(planReminders([tabaco, boxeo], [trama], [], on, day(3), '07:00', 2)).toEqual([])
+    expect(planReminders([tabaco], [trama], [], on, day(3), '07:00', 2)).toEqual([])
+  })
+  it('un hábito de varias veces al día avisa por cada momento pendiente', () => {
+    const tres: Habit = { ...base, id: 'd', name: 'Dientes', createdAt: 1, slots: [
+      { moment: 'morning', cue: 'desayunar', remindAt: '08:00' }, { moment: 'afternoon', remindAt: '14:00' }, { moment: 'night', cue: 'cenar', remindAt: '22:00' },
+    ] }
+    const logs: Log[] = [{ habitId: 'd', date: day(3), state: 'full', at: 0, slots: ['morning'] }, { habitId: 'd', date: day(2), state: 'full', at: 0, slots: ['night'] }]
+    const r = noComeback(planReminders([tres], [trama], logs, on, day(3), '07:00', 1))
+    expect(r.map((x) => [x.time, x.kind, x.slot])).toEqual([['14:00', 'habit', 'afternoon'], ['20:30', 'rescue', undefined], ['22:00', 'habit', 'night']])
+    expect(r[1].title).toBe('Te quedan 2 por hoy')
+    expect(r[2].title).toBe('Dientes, después de cenar')
+    expect(new Set(r.map((x) => x.id)).size).toBe(3)
+  })
+  it('un hábito con meta semanal avisa solo cuando los días empiezan a apretar', () => {
+    const boxeo: Habit = { ...base, id: 'b', name: 'Boxeo', createdAt: 8, rhythm: { kind: 'quota', period: 'week', times: 2 }, remindAt: '18:00' }
+    // Hoy es jueves 4; faltan 2. Avisa desde el viernes (quedan 3 días) hasta el domingo.
+    const r = noComeback(planReminders([boxeo], [trama], [], { ...on, rescue: false }, day(3), '07:00', 4))
+    expect(r.map((x) => x.date)).toEqual([day(4), day(5), day(6)])
+    expect(r[0].body).toBe('Te faltan 2 veces esta semana.')
+    expect(r[1].body).toBe('Quedan 2 días y te faltan 2 esta semana.')
+    // Con la meta cumplida no avisa.
+    const done = [log('b', 0), log('b', 1)]
+    expect(noComeback(planReminders([boxeo], [trama], done, { ...on, rescue: false }, day(3), '07:00', 4))).toEqual([])
+  })
+  it('en pausa no hay avisos', () => {
+    const r = noComeback(planReminders([dientes], [trama], [], on, day(3), '07:00', 3, [{ from: day(3), to: day(4) }]))
+    expect(r.map((x) => x.date)).toEqual([day(5), day(5)])
+  })
+  it('deja dos avisos de regreso, a los 3 y a los 7 días, por si la app no se vuelve a abrir', () => {
+    const r = planReminders([dientes], [trama], [], on, day(3), '07:00', 1).filter((x) => x.kind === 'comeback')
+    expect(r.map((x) => [x.date, x.time])).toEqual([[day(6), '19:00'], [day(10), '19:00']])
   })
 })
 
@@ -449,6 +526,7 @@ describe('respaldo', () => {
     habits: [{ id: 'h', tramaId: 't', name: 'H', moment: 'morning' as const, rhythm: daily, createdOn: MON, createdAt: 0, archived: false }],
     logs: [{ habitId: 'h', date: MON, state: 'full' as const, at: 0 }],
     uses: [], urges: [], todos: [{ id: 'p', title: 'Dentista', done: false, createdAt: 0 }], meta: [{ key: 'reminders', value: { enabled: true } }],
+    closures: [{ habitId: 'h', date: MON, limit: 3, ok: true }],
   }
   const text = JSON.stringify(buildBackup(data, new Date('2024-01-05T10:00:00Z')))
 
@@ -473,7 +551,136 @@ describe('respaldo', () => {
     const old = JSON.parse(text)
     delete old.data.todos
     delete old.data.meta
-    const r = parseBackup(JSON.stringify(old))
-    expect(r.ok && r.backup.data.todos).toEqual([])
+    delete old.data.closures
+    const r2 = parseBackup(JSON.stringify(old))
+    expect(r2.ok && [r2.backup.data.todos, r2.backup.data.closures]).toEqual([[], []])
+  })
+})
+
+
+describe('pausas y cambios de ritmo', () => {
+  it('los días en pausa no rompen la racha ni suman', () => {
+    const pauses = [{ from: day(3), to: day(8) }]
+    expect(computeStreak(habit(daily), set(0, 1, 2), day(9)).current).toBe(0)
+    expect(computeStreak(habit(daily), set(0, 1, 2), day(9), pauses)).toMatchObject({ current: 3, atRisk: false, missedLast: false })
+    expect(computeStreak(habit(daily), set(0, 1, 2, 5), day(9), pauses).current).toBe(4)
+  })
+  it('con pausa abierta, hoy no está pendiente', () => {
+    const s = computeStreak(habit(daily), set(0), day(3), [{ from: day(2) }])
+    expect(s).toMatchObject({ current: 1, atRisk: false })
+  })
+  it('una semana con pausa no cuenta como semana fallada', () => {
+    const twice: Rhythm = { kind: 'quota', period: 'week', times: 2 }
+    const done = set(0, 1, 7, 8, 28, 29) // semanas 1 y 2 cumplidas, 3 y 4 vacías, 5 cumplida
+    expect(computeStreak(habit(twice), done, day(29)).current).toBe(1)
+    expect(computeStreak(habit(twice), done, day(29), [{ from: day(14), to: day(27) }]).current).toBe(3)
+  })
+  it('cambiar el ritmo rige desde ese día y conserva la racha que se traía', () => {
+    // Era diario con 5 días seguidos; el día 5 pasa a lunes, miércoles y viernes.
+    const h = { rhythm: { kind: 'days', days: [0, 2, 4] } as Rhythm, createdOn: MON, rhythmSince: day(5), streakCarry: 5 }
+    // El martes de la semana anterior no se reinterpreta como "no programado".
+    expect(computeStreak(h, set(0, 1, 2, 3, 4), day(6)).current).toBe(5)
+    expect(computeStreak(h, set(0, 1, 2, 3, 4, 7), day(7)).current).toBe(6)
+    // Dos fallos seguidos con el ritmo nuevo: la racha traída también se pierde.
+    expect(computeStreak(h, set(0, 1, 2, 3, 4), day(11)).current).toBe(0)
+  })
+})
+
+describe('varias veces al día', () => {
+  const trama = { id: 't', name: 'Cuidar mi cuerpo', color: 'teal' as const, order: 0, createdAt: 0 }
+  const dientes: Habit = {
+    id: 'd', tramaId: 't', name: 'Dientes', moment: 'morning', rhythm: daily, createdOn: MON, createdAt: 1, archived: false,
+    slots: [{ moment: 'morning', cue: 'desayunar' }, { moment: 'afternoon', cue: 'almorzar' }, { moment: 'night' }],
+  }
+  const cama: Habit = { id: 'c', tramaId: 't', name: 'Cama', moment: 'morning', rhythm: daily, createdOn: MON, createdAt: 2, archived: false, anchorId: 'd' }
+
+  it('aparece una vez en cada momento, y cada una cuenta en el avance del día', () => {
+    const logs: Log[] = [{ habitId: 'd', date: day(1), state: 'full', at: 0, slots: ['morning'] }]
+    const v = buildToday([dientes, cama], [trama], logs, day(1))
+    expect(v.sections.map((s) => [s.id, s.items.map((i) => i.key), s.done])).toEqual([
+      ['morning', ['d:morning', 'c'], 1], ['afternoon', ['d:afternoon'], 0], ['night', ['d:night'], 0],
+    ])
+    expect(v).toMatchObject({ done: 1, total: 4, totalVotes: 1 })
+    const [first] = v.sections[0].items
+    expect(first).toMatchObject({ doneToday: true, cue: 'desayunar', slot: 'morning', multi: { done: 1, total: 3 } })
+    expect(v.sections[0].items[1].linked).toBe(true)
+  })
+  it('con al menos una vez el día cuenta para la racha', () => {
+    const logs: Log[] = [
+      { habitId: 'd', date: MON, state: 'full', at: 0, slots: ['morning', 'night'] },
+      { habitId: 'd', date: day(1), state: 'full', at: 0, slots: ['afternoon'] },
+    ]
+    const item = buildToday([dientes], [trama], logs, day(1)).sections[1].items[0]
+    expect(item.streak.current).toBe(2)
+    expect(item.doneToday).toBe(true)
+  })
+  it('en pausa no se exige nada, pero lo ya marcado sigue visible', () => {
+    const logs: Log[] = [{ habitId: 'c', date: day(1), state: 'full', at: 0 }]
+    const v = buildToday([dientes, cama], [trama], logs, day(1), [], [], { pauses: [{ from: day(1) }] })
+    expect(v.paused).toBe(true)
+    expect(v.sections.flatMap((s) => s.items).map((i) => i.key)).toEqual(['c'])
+  })
+  it('el orden manual manda sobre la fecha de creación', () => {
+    const a: Habit = { ...cama, id: 'a', anchorId: undefined, order: 5 }
+    const b: Habit = { ...cama, id: 'b', anchorId: undefined, createdAt: 99, order: 1 }
+    expect(buildToday([a, b], [trama], [], MON).sections[0].items.map((i) => i.key)).toEqual(['b', 'a'])
+  })
+})
+
+describe('tramas dobles y constelación', () => {
+  const t1 = { id: 't1', name: 'Vida sana', color: 'teal' as const, order: 0, createdAt: 0 }
+  const t2 = { id: 't2', name: 'Dueño de mí', color: 'lila' as const, order: 1, createdAt: 1 }
+  const h = (id: string, extra: Partial<Habit> = {}): Habit => ({
+    id, tramaId: 't1', name: id, moment: 'morning', rhythm: daily, createdOn: MON, createdAt: id.charCodeAt(0), archived: false, ...extra,
+  })
+  const habits = [h('a'), h('b', { tramaId2: 't2' }), h('c', { tramaId: 't2', anchorId: 'a' })]
+  const votes = [{ habitId: 'a' }, { habitId: 'b' }, { habitId: 'b' }, { habitId: 'c' }]
+
+  it('un hábito en dos tramas suma a las dos, y una sola vez al total', () => {
+    const stats = tramaStats([t1, t2], habits, votes)
+    expect(stats.map((s) => [s.trama.id, s.votes, s.habits.map((x) => x.id)])).toEqual([['t1', 3, ['a', 'b']], ['t2', 3, ['b', 'c']]])
+    expect(votes).toHaveLength(4)
+  })
+  it('la constelación es estable: los mismos datos dan las mismas posiciones', () => {
+    const stats = tramaStats([t1, t2], habits, votes)
+    const count = (id: string) => votes.filter((v) => v.habitId === id).length
+    const one = layoutConstellation(stats, count, 350)
+    expect(layoutConstellation(stats, count, 350)).toEqual(one)
+    expect(one.nodes.map((n) => n.habit.id)).toEqual(['a', 'b', 'c']) // cada hábito una sola vez, en su trama principal
+    expect(one.edges).toEqual([{ a: 'a', b: 'b', color: 'teal' }])
+    expect(one.stacks).toEqual([{ a: 'a', b: 'c' }])
+    expect(one.bridges.map((b) => [b.habitId, b.color])).toEqual([['b', 'lila']])
+    for (const n of one.nodes) expect(n.x - n.r >= 0 && n.x + n.r <= 350 && n.r >= 20).toBe(true)
+    const [a, b] = one.nodes
+    expect(b.r).toBeGreaterThan(a.r) // más votos, nodo más grande
+  })
+})
+
+describe('capítulos semanales', () => {
+  const trama = { id: 't', name: 'Cuidar mi cuerpo', color: 'teal' as const, order: 0, createdAt: 0 }
+  const leer: Habit = { id: 'l', tramaId: 't', name: 'Leer', moment: 'night', rhythm: daily, createdOn: MON, createdAt: 1, archived: false }
+  const log = (n: number, state: 'full' | 'min' = 'full'): Log => ({ habitId: 'l', date: day(n), state, at: 0 })
+  const data = (logs: Log[]): ChapterData => ({ habits: [leer], tramas: [trama], logs, uses: [], urges: [], closures: [], pauses: [], todos: [] })
+
+  it('numera las semanas cerradas desde la primera, de la más nueva a la más vieja', () => {
+    const c = buildChapters(data([log(0), log(8)]), day(15))
+    expect(c.map((x) => [x.number, x.start, x.votes])).toEqual([[2, day(7), 1], [1, MON, 1]])
+    expect(buildChapters(data([]), day(3))).toEqual([]) // la semana en curso todavía no es capítulo
+  })
+  it('cuenta votos, caídas y regresos', () => {
+    // Semana 2: falla martes y viernes, y vuelve al día siguiente las dos veces.
+    const c = buildChapter(data([0, 1, 2, 7, 9, 10, 12, 13].map((d) => log(d))), day(7), 2)
+    expect(c.votes).toBe(5)
+    expect(c.title).toBe('Caer y volver')
+    expect(c.lines[0]).toBe('Sumaste 5 votos en 5 días, 2 más que la semana anterior.')
+    expect(c.lines[1]).toBe('Fallaste 2 veces y todas volviste a la siguiente. Eso es no fallar dos veces.')
+  })
+  it('una semana sin votos lo dice sin castigar', () => {
+    const c = buildChapter(data([log(0)]), day(7), 2)
+    expect(c).toMatchObject({ votes: 0, title: 'Una semana en blanco' })
+  })
+  it('sugiere subir un paso cuando casi todo fue la versión de 2 minutos', () => {
+    const c = buildChapter(data([0, 1, 2, 3, 4].map((d) => log(d, 'min'))), MON, 1)
+    expect(c.lines.some((l) => l.startsWith('Leer: 5 de 5 veces fue la versión de 2 minutos.'))).toBe(true)
   })
 })

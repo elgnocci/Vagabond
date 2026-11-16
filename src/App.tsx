@@ -2,7 +2,10 @@ import { Component, useEffect, useState, type ReactNode } from 'react'
 import { MotionConfig } from 'motion/react'
 import { useData, useToday } from './db/hooks'
 import { planReminders } from './domain/reminders'
-import { canNotify, syncReminders } from './notify'
+import { pushBack } from './back'
+import { markDone } from './db/db'
+import { clockNow } from './day'
+import { canNotify, initNative, syncReminders } from './notify'
 import { Hoy } from './screens/Hoy'
 import { Pendientes } from './screens/Pendientes'
 import { Progreso } from './screens/Progreso'
@@ -27,9 +30,9 @@ function ReminderSync() {
   useEffect(() => {
     if (!canNotify || !data) return
     const id = window.setTimeout(() => {
-      const now = new Date()
-      const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-      void syncReminders(planReminders(data.habits, data.tramas, data.logs, data.reminders, today, hhmm, 7)).catch(() => {})
+      // Un mes por delante: si la app deja de abrirse, los avisos no se apagan a la semana.
+      const plan = planReminders(data.habits, data.tramas, data.logs, data.reminders, today, clockNow(), 30, data.pauses)
+      void syncReminders(plan).catch(() => {})
     }, 600)
     return () => window.clearTimeout(id)
   }, [data, today])
@@ -38,6 +41,12 @@ function ReminderSync() {
 
 export function App() {
   const [tab, setTab] = useState<TabId>('hoy')
+
+  useEffect(() => {
+    void initNative({ onDone: (habitId, date, slot) => void markDone(habitId, date, slot).catch(() => {}) }).catch(() => {})
+  }, [])
+  // Con el botón atrás del teléfono, desde otra pestaña se vuelve a Hoy.
+  useEffect(() => (tab === 'hoy' ? undefined : pushBack(() => setTab('hoy'))), [tab])
   return (
     <MotionConfig reducedMotion="user">
       <ReminderSync />

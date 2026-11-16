@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useDragControls } from 'motion/react'
+import { pushBack } from '../back'
 
 interface Props {
   open: boolean
@@ -12,7 +13,7 @@ interface Props {
   children: ReactNode
 }
 
-/** Hoja inferior: se cierra tocando fuera, arrastrando el tirador hacia abajo o con Escape. */
+/** Hoja inferior: se cierra tocando fuera, arrastrando el tirador, con Escape o con el botón atrás del teléfono. */
 export function Sheet({ open, label, title, onClose, children }: Props) {
   const drag = useDragControls()
 
@@ -25,7 +26,9 @@ export function Sheet({ open, label, title, onClose, children }: Props) {
     document.body.style.overflow = 'hidden'
     root?.setAttribute('inert', '')
     window.addEventListener('keydown', onKey)
+    const popBack = pushBack(onClose)
     return () => {
+      popBack()
       document.body.style.overflow = prev
       root?.removeAttribute('inert')
       window.removeEventListener('keydown', onKey)

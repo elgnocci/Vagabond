@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useData, useToast, useToday } from '../db/hooks'
+import { buildChapters, type Chapter } from '../domain/chapters'
 import { addDays, type ISODate } from '../domain/dates'
 import { activeDays, bestStreak, cumulativeSeries, habitRate, reduceRate, weekCompare } from '../domain/progress'
 import { collectVotes, reduceState } from '../domain/reduce'
 import { computeStreak } from '../domain/streaks'
 import { tramaStats } from '../domain/tramas'
+import { ChapterSheet } from '../ui/ChapterSheet'
 import { HabitDetail } from '../ui/HabitDetail'
 import { LineChart } from '../ui/LineChart'
 import { Sheet } from '../ui/Sheet'
@@ -20,11 +22,12 @@ export function Progreso() {
   const today = useToday()
   const [range, setRange] = useState<Range>('30')
   const [open, setOpen] = useState<{ open: boolean; id?: string }>({ open: false })
+  const [chapter, setChapter] = useState<{ open: boolean; c?: Chapter }>({ open: false })
   const [toast, setToast] = useToast()
 
   const m = useMemo(() => {
     if (!data) return undefined
-    const votes = collectVotes(data.habits, data.logs, data.uses, data.urges, today)
+    const votes = collectVotes(data.habits, data.logs, data.uses, data.urges, today, data.closures, data.pauses)
     const habits = data.habits.filter((h) => !h.archived)
     const first = habits.reduce<ISODate>((min, h) => (h.createdOn < min ? h.createdOn : min), today)
     const doneOf = (id: string) => new Set(data.logs.filter((l) => l.habitId === id).map((l) => l.date))
@@ -32,15 +35,15 @@ export function Progreso() {
     const rows = habits.map((h) => {
       const trama = data.tramas.find((t) => t.id === h.tramaId)
       if (h.kind === 'reduce') {
-        const s = reduceState(h, data.uses, data.urges, today)
-        return { habit: h, trama, rate: reduceRate(h, data.uses, today), streak: plural(s.streak, 'día', 'días'), best: 0, daily: false }
+        const s = reduceState(h, data.uses, data.urges, today, data.closures, data.pauses)
+        return { habit: h, trama, rate: reduceRate(h, data.uses, data.urges, data.closures, today, data.pauses), streak: plural(s.streak, 'día', 'días'), best: 0, daily: false }
       }
       const done = doneOf(h.id)
-      const s = computeStreak(h, done, today)
+      const s = computeStreak(h, done, today, data.pauses)
       const unit = s.unit === 'days' ? ['día', 'días'] : s.unit === 'weeks' ? ['sem', 'sem'] : ['mes', 'meses']
       return {
-        habit: h, trama, rate: habitRate(h, done, today), streak: plural(s.current, unit[0], unit[1]),
-        best: h.rhythm.kind === 'days' ? bestStreak(h, done, today) : 0, daily: h.rhythm.kind === 'days',
+        habit: h, trama, rate: habitRate(h, done, today, 30, data.pauses), streak: plural(s.current, unit[0], unit[1]),
+        best: h.rhythm.kind === 'days' ? bestStreak(h, done, today, data.pauses) : 0, daily: h.rhythm.kind === 'days',
       }
     })
     const top = rows.filter((r) => r.daily).sort((a, b) => b.best - a.best)[0]
@@ -50,6 +53,7 @@ export function Progreso() {
       week: weekCompare(votes, today),
       active: activeDays(votes),
       tramas: tramaStats(data.tramas, data.habits, votes),
+      chapters: buildChapters(data, today, 8),
     }
   }, [data, today])
 
@@ -112,6 +116,21 @@ export function Progreso() {
             </section>
           )}
 
+          {m.chapters.length > 0 && (
+            <>
+              <div className="sec-h"><h2>Capítulos</h2><span>uno por semana</span></div>
+              <div className="chapters">
+                {m.chapters.map((c) => (
+                  <motion.button key={c.start} className="chap" whileTap={{ scale: 0.97 }} onClick={() => setChapter({ open: true, c })}>
+                    <small className="mono">Cap. {c.number} · {c.range}</small>
+                    <b>{c.title}</b>
+                    <span>{c.votes} {c.votes === 1 ? 'voto' : 'votos'}</span>
+                  </motion.button>
+                ))}
+              </div>
+            </>
+          )}
+
           <div className="sec-h"><h2>Constancia, últimos 30 días</h2></div>
           {m.rows.map((r) => (
             <motion.button key={r.habit.id} className="rate" data-color={r.trama?.color ?? 'teal'} whileTap={{ scale: 0.98 }}
@@ -126,6 +145,10 @@ export function Progreso() {
 
       <Sheet open={open.open && !!current} label="Historial del hábito" onClose={() => setOpen((o) => ({ ...o, open: false }))}>
         {current && data && <HabitDetail key={current.id} habit={current} data={data} today={today} onError={setToast} />}
+      </Sheet>
+
+      <Sheet open={chapter.open && !!chapter.c} label="Capítulo de la semana" onClose={() => setChapter((c) => ({ ...c, open: false }))}>
+        {chapter.c && <ChapterSheet chapter={chapter.c} />}
       </Sheet>
 
       <AnimatePresence>

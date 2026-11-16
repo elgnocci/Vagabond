@@ -1,16 +1,20 @@
 import { useCallback, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { createTrama, deleteTrama, updateTrama, type TramaDraft } from '../db/db'
-import { useData, useToast, useToday } from '../db/hooks'
+import { archiveHabit, createTrama, deleteTrama, updateTrama, type TramaDraft } from '../db/db'
+import { useData, useToast, useToday, type Data } from '../db/hooks'
 import { collectVotes, limitOn, reduceState } from '../domain/reduce'
 import { computeStreak } from '../domain/streaks'
 import { MILESTONES, milestoneProgress, rhythmText, tramaStats, type TramaStats } from '../domain/tramas'
 import { TRAMA_COLORS, type Trama } from '../domain/types'
+import { Constellation } from '../ui/Constellation'
+import { HabitDetail } from '../ui/HabitDetail'
+import { plural } from '../ui/habitText'
 import { Sheet } from '../ui/Sheet'
 import { LoadingState } from '../ui/States'
 import { TramaForm } from '../ui/TramaForm'
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+type View = 'map' | 'list'
+const VIEWS: { id: View; label: string }[] = [{ id: 'map', label: 'Mapa' }, { id: 'list', label: 'Lista' }]
 
 function MileBar({ votes }: { votes: number }) {
   const { next, ratio } = milestoneProgress(votes)
@@ -25,17 +29,29 @@ function MileBar({ votes }: { votes: number }) {
 export function Tramas() {
   const data = useData()
   const today = useToday()
+  const [view, setView] = useState<View>('map')
   const [selected, setSelected] = useState<string | null>(null)
+  const [hist, setHist] = useState<{ open: boolean; id?: string }>({ open: false })
   const [form, setForm] = useState<{ open: boolean; trama?: Trama }>({ open: false })
   const [toast, setToast] = useToast()
   const closeForm = useCallback(() => setForm((f) => ({ ...f, open: false })), [])
+  const closeHist = useCallback(() => setHist((h) => ({ ...h, open: false })), [])
 
-  const stats = useMemo(
-    () => (data ? tramaStats(data.tramas, data.habits, collectVotes(data.habits, data.logs, data.uses, data.urges, today)) : undefined),
-    [data, today],
-  )
+  const m = useMemo(() => {
+    if (!data) return undefined
+    const votes = collectVotes(data.habits, data.logs, data.uses, data.urges, today, data.closures, data.pauses)
+    const perHabit = new Map<string, number>()
+    const lit = new Set<string>()
+    for (const v of votes) {
+      perHabit.set(v.habitId, (perHabit.get(v.habitId) ?? 0) + 1)
+      if (v.date === today) lit.add(v.habitId)
+    }
+    return { stats: tramaStats(data.tramas, data.habits, votes), votesOf: (id: string) => perHabit.get(id) ?? 0, lit }
+  }, [data, today])
+  const stats = m?.stats
   const current = stats?.find((s) => s.trama.id === selected)
   const suggested = TRAMA_COLORS.find((c) => !data?.tramas.some((t) => t.color === c)) ?? 'teal'
+  const anyHabit = !!stats?.some((s) => s.habits.length > 0)
 
   async function save(draft: TramaDraft) {
     try {
@@ -61,8 +77,9 @@ export function Tramas() {
 
   return (
     <main className="screen">
-      {current ? (
-        <Detail s={current} today={today} data={data!} onBack={() => setSelected(null)} onEdit={() => setForm({ open: true, trama: current.trama })} />
+      {current && data ? (
+        <Detail s={current} today={today} data={data} onBack={() => setSelected(null)} onEdit={() => setForm({ open: true, trama: current.trama })}
+          onHabit={(id) => setHist({ open: true, id })} onError={setToast} />
       ) : (
         <>
           <header className="head">
@@ -72,7 +89,7 @@ export function Tramas() {
             </button>
           </header>
           <p className="title">Quién estás eligiendo ser</p>
-          {!stats ? (
+          {!stats || !m ? (
             <LoadingState />
           ) : stats.length === 0 ? (
             <div className="state" style={{ paddingTop: '8vh' }}>
@@ -81,21 +98,40 @@ export function Tramas() {
               <button className="btn" onClick={() => setForm({ open: true })}>Crear mi primera trama</button>
             </div>
           ) : (
-            stats.map((s) => (
-              <motion.button key={s.trama.id} className="trama" data-color={s.trama.color} whileTap={{ scale: 0.98 }} onClick={() => setSelected(s.trama.id)}>
-                <span className="trama-top">
-                  <span>
-                    <span className="trama-name">{s.trama.name}</span>
-                    {s.trama.identity && <span className="identity">Soy alguien que {s.trama.identity}</span>}
-                  </span>
-                  <span className="votes">{s.votes}<small>{s.votes === 1 ? 'voto' : 'votos'}</small></span>
-                </span>
-                <MileBar votes={s.votes} />
-                <span className="mono" style={{ display: 'block', marginTop: 12 }}>
-                  {s.habits.length ? plural(s.habits.length, 'hábito', 'hábitos') : 'Sin hábitos todavía'}
-                </span>
-              </motion.button>
-            ))
+            <>
+              {anyHabit && (
+                <div className="segm sm view-switch" role="group" aria-label="Vista">
+                  {VIEWS.map((v) => (
+                    <button key={v.id} aria-pressed={view === v.id} onClick={() => setView(v.id)}>
+                      {view === v.id && <motion.i layoutId="vista" className="thumb" transition={{ type: 'spring', stiffness: 500, damping: 36 }} />}
+                      <span>{v.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {anyHabit && view === 'map' ? (
+                <>
+                  <Constellation stats={stats} votesOf={m.votesOf} lit={m.lit} onHabit={(id) => setHist({ open: true, id })} onTrama={setSelected} />
+                  <p className="hint">Cada nodo crece con sus votos y se enciende cuando votas hoy. Toca uno para ver su historia.</p>
+                </>
+              ) : (
+                stats.map((s) => (
+                  <motion.button key={s.trama.id} className="trama" data-color={s.trama.color} whileTap={{ scale: 0.98 }} onClick={() => setSelected(s.trama.id)}>
+                    <span className="trama-top">
+                      <span>
+                        <span className="trama-name">{s.trama.name}</span>
+                        {s.trama.identity && <span className="identity">Soy alguien que {s.trama.identity}</span>}
+                      </span>
+                      <span className="votes">{s.votes}<small>{s.votes === 1 ? 'voto' : 'votos'}</small></span>
+                    </span>
+                    <MileBar votes={s.votes} />
+                    <span className="mono" style={{ display: 'block', marginTop: 12 }}>
+                      {s.habits.length ? plural(s.habits.length, 'hábito', 'hábitos') : 'Sin hábitos todavía'}
+                    </span>
+                  </motion.button>
+                ))
+              )}
+            </>
           )}
         </>
       )}
@@ -103,6 +139,12 @@ export function Tramas() {
       <Sheet open={form.open} label={form.trama ? 'Editar trama' : 'Nueva trama'} title={form.trama ? 'Editar trama' : 'Nueva trama'} onClose={closeForm}>
         <TramaForm key={form.trama?.id ?? 'new'} trama={form.trama} suggested={suggested}
           canDelete={!data?.habits.some((h) => h.tramaId === form.trama?.id)} onSubmit={save} onDelete={remove} />
+      </Sheet>
+
+      <Sheet open={hist.open} label="Historial del hábito" onClose={closeHist}>
+        {data && data.habits.filter((h) => h.id === hist.id).map((h) => (
+          <HabitDetail key={h.id} habit={h} data={data} today={today} onError={setToast} />
+        ))}
       </Sheet>
 
       <AnimatePresence>
@@ -119,14 +161,17 @@ export function Tramas() {
 interface DetailProps {
   s: TramaStats
   today: string
-  data: NonNullable<ReturnType<typeof useData>>
+  data: Data
   onBack: () => void
   onEdit: () => void
+  onHabit: (id: string) => void
+  onError: (msg: string) => void
 }
 
-function Detail({ s, today, data, onBack, onEdit }: DetailProps) {
+function Detail({ s, today, data, onBack, onEdit, onHabit, onError }: DetailProps) {
   const { next } = milestoneProgress(s.votes)
   const unit = { days: ['día', 'días'], weeks: ['semana', 'semanas'], months: ['mes', 'meses'] } as const
+  const archived = data.habits.filter((h) => h.archived && (h.tramaId === s.trama.id || h.tramaId2 === s.trama.id))
   return (
     <div data-color={s.trama.color}>
       <header className="head">
@@ -154,29 +199,43 @@ function Detail({ s, today, data, onBack, onEdit }: DetailProps) {
       <div className="sec-h"><h2>Hábitos</h2><span>{s.habits.length}</span></div>
       {s.habits.length === 0 && <p className="note" style={{ textAlign: 'left', margin: '0 4px' }}>Esta trama aún no tiene hábitos. Créalos desde Hoy con el botón +.</p>}
       {s.habits.map((h) => {
+        const shared = h.tramaId2 ? data.tramas.find((t) => t.id === (h.tramaId === s.trama.id ? h.tramaId2 : h.tramaId))?.name : undefined
+        const also = shared ? ` · también en ${shared}` : ''
         if (h.kind === 'reduce') {
-          const st = reduceState(h, data.uses, data.urges, today)
+          const st = reduceState(h, data.uses, data.urges, today, data.closures, data.pauses)
           return (
-            <div className="hrow" key={h.id}>
-              <div>
+            <button className="hrow" key={h.id} onClick={() => onHabit(h.id)}>
+              <span>
                 <b>{h.name}</b>
-                <span>Plan de reducción · {h.plan && !st.quit ? `tope de hoy ${limitOn(h.plan, today)}` : 'en cero'}</span>
-              </div>
+                <span>{st.cold ? 'En cero desde el primer día' : `Plan de reducción · ${h.plan && !st.quit ? `tope de hoy ${limitOn(h.plan, today)}` : 'en cero'}`}{also}</span>
+              </span>
               <em>{st.streak}<small>{unit.days[st.streak === 1 ? 0 : 1]}</small></em>
-            </div>
+            </button>
           )
         }
-        const streak = computeStreak(h, new Set(data.logs.filter((l) => l.habitId === h.id).map((l) => l.date)), today)
+        const streak = computeStreak(h, new Set(data.logs.filter((l) => l.habitId === h.id).map((l) => l.date)), today, data.pauses)
         return (
-          <div className="hrow" key={h.id}>
-            <div>
+          <button className="hrow" key={h.id} onClick={() => onHabit(h.id)}>
+            <span>
               <b>{h.name}</b>
-              <span>{rhythmText(h.rhythm)}{h.minVersion ? ` · 2 min: ${h.minVersion}` : ''}</span>
-            </div>
+              <span>{rhythmText(h.rhythm)}{h.slots && h.slots.length > 1 ? `, ${h.slots.length} veces al día` : ''}{h.minVersion ? ` · 2 min: ${h.minVersion}` : ''}{also}</span>
+            </span>
             <em>{streak.current}<small>{unit[streak.unit][streak.current === 1 ? 0 : 1]}</small></em>
-          </div>
+          </button>
         )
       })}
+
+      {archived.length > 0 && (
+        <>
+          <div className="sec-h"><h2>Archivados</h2><span>{archived.length}</span></div>
+          {archived.map((h) => (
+            <div className="hrow" key={h.id}>
+              <span><b>{h.name}</b><span>Sus votos siguen contando</span></span>
+              <button className="link go" onClick={() => void archiveHabit(h.id, false).catch(() => onError('No se pudo recuperar. Inténtalo de nuevo.'))}>Recuperar</button>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   )
 }

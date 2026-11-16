@@ -7,11 +7,15 @@ interface Props {
   onMin: () => void
   onEdit: () => void
   onHistory: () => void
+  /** Mover en la lista; falta si no hay hacia dónde. */
+  onUp?: () => void
+  onDown?: () => void
+  onArchive: () => void
   onDelete: () => void
 }
 
-/** Opciones de un hábito: versión de 2 minutos, editar y eliminar. */
-export function HabitMenu({ item, onMin, onEdit, onHistory, onDelete }: Props) {
+/** Opciones de un hábito: versión de 2 minutos, historial, editar, mover, archivar y eliminar. */
+export function HabitMenu({ item, onMin, onEdit, onHistory, onUp, onDown, onArchive, onDelete }: Props) {
   const [confirming, setConfirming] = useState(false)
   const { habit, trama, doneToday } = item
   return (
@@ -32,8 +36,15 @@ export function HabitMenu({ item, onMin, onEdit, onHistory, onDelete }: Props) {
         ))}
         <button className="row" onClick={onHistory}>Ver historial<small>Rachas, constancia y calendario para corregir días.</small></button>
         <button className="row" onClick={onEdit}>Editar hábito</button>
+        {(onUp || onDown) && (
+          <div className="pair">
+            <button className="row" onClick={onUp} disabled={!onUp}>Subir</button>
+            <button className="row" onClick={onDown} disabled={!onDown}>Bajar</button>
+          </div>
+        )}
+        <button className="row" onClick={onArchive}>Archivar<small>Sale de Hoy, pero conserva sus votos. Se recupera desde Tramas.</small></button>
         <button className="row danger" onClick={() => (confirming ? onDelete() : setConfirming(true))}>
-          {confirming ? 'Sí, eliminar el hábito y sus votos' : 'Eliminar hábito'}
+          {confirming ? 'Sí, eliminar el hábito y sus votos' : 'Eliminar con sus votos'}
         </button>
       </div>
     </>

@@ -1,7 +1,8 @@
-import { addDays, diffDays, periodEnd, startOfMonth, startOfWeek, weekdayMon, type ISODate } from './dates'
-import { limitOn } from './reduce'
-import { computeStreak } from './streaks'
-import type { Habit, Use } from './types'
+import { addDays, periodEnd, startOfMonth, startOfWeek, weekdayMon, type ISODate } from './dates'
+import { isPaused } from './pauses'
+import { reduceDays } from './reduce'
+import { computeStreak, rhythmStart } from './streaks'
+import type { Closure, Habit, Pause, Urge, Use } from './types'
 
 export interface SeriesPoint {
   date: ISODate
@@ -51,49 +52,59 @@ export interface Rate {
 }
 
 /** Constancia en los últimos `window` días: lo hecho sobre lo que tocaba. Hoy pendiente no cuenta en contra. */
-export function habitRate(habit: Habit, done: ReadonlySet<ISODate>, today: ISODate, window = 30): Rate {
+export function habitRate(
+  habit: Habit, done: ReadonlySet<ISODate>, today: ISODate, window = 30, pauses: readonly Pause[] = [],
+): Rate {
   const first = addDays(today, -(window - 1))
-  const from = habit.createdOn > first ? habit.createdOn : first
+  const start = rhythmStart(habit)
+  const from = start > first ? start : first
   let did = 0
   let expected = 0
   if (habit.rhythm.kind === 'days') {
     for (let d = from; d <= today; d = addDays(d, 1)) {
       if (!habit.rhythm.days.includes(weekdayMon(d))) continue
       if (done.has(d)) did++
-      if (done.has(d) || d < today) expected++
+      if (done.has(d) || (d < today && !isPaused(pauses, d))) expected++
     }
   } else {
     for (const d of done) if (d >= from && d <= today) did++
-    const days = diffDays(from, today) + 1
+    let days = 0
+    for (let d = from; d <= today; d = addDays(d, 1)) if (!isPaused(pauses, d)) days++
     expected = Math.max(1, Math.round((habit.rhythm.times * days) / (habit.rhythm.period === 'week' ? 7 : 30)))
     did = Math.min(did, expected)
   }
   return { done: did, expected, ratio: expected ? did / expected : 0 }
 }
 
-/** Constancia de algo que se está dejando: días cerrados dentro del tope. */
-export function reduceRate(habit: Habit, uses: Use[], today: ISODate, window = 30): Rate {
+/** Constancia de algo que se está dejando: días cerrados dentro del tope, sobre los días con registro o confirmación. */
+export function reduceRate(
+  habit: Habit, uses: Use[], urges: Urge[], closures: Closure[], today: ISODate, pauses: readonly Pause[] = [], window = 30,
+): Rate {
   const first = addDays(today, -window)
   const from = habit.createdOn > first ? habit.createdOn : first
-  const perDay = new Map<ISODate, number>()
-  for (const u of uses) if (u.habitId === habit.id) perDay.set(u.date, (perDay.get(u.date) ?? 0) + 1)
+  const days = reduceDays(habit, uses, urges, closures, pauses)
   let ok = 0
   let expected = 0
   for (let d = from; d < today; d = addDays(d, 1)) {
+    const st = days.status(d)
+    if (st === 'skip') continue
     expected++
-    if (habit.plan && (perDay.get(d) ?? 0) <= limitOn(habit.plan, d)) ok++
+    if (st === 'ok') ok++
   }
   return { done: ok, expected, ratio: expected ? ok / expected : 0 }
 }
 
 /** La racha más larga que tuvo el hábito. Una racha solo puede tocar su máximo en un día cumplido. */
-export function bestStreak(habit: Pick<Habit, 'rhythm' | 'createdOn'>, done: ReadonlySet<ISODate>, today: ISODate): number {
-  let best = computeStreak(habit, done, today).current
+export function bestStreak(
+  habit: Pick<Habit, 'rhythm' | 'createdOn'> & Partial<Pick<Habit, 'rhythmSince' | 'streakCarry'>>, done: ReadonlySet<ISODate>, today: ISODate,
+  pauses: readonly Pause[] = [],
+): number {
+  let best = computeStreak(habit, done, today, pauses).current
   for (const d of done) {
     if (d > today) continue
     // En hábitos de meta la racha sube al cerrar el período, así que se mide en su último día.
     const at = habit.rhythm.kind === 'quota' ? periodEnd(habit.rhythm.period === 'week' ? startOfWeek(d) : startOfMonth(d), habit.rhythm.period) : d
-    best = Math.max(best, computeStreak(habit, done, at > today ? today : at).current)
+    best = Math.max(best, computeStreak(habit, done, at > today ? today : at, pauses).current)
   }
   return best
 }
